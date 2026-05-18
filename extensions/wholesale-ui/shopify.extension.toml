@@ -1,0 +1,9 @@
+api_version = "2025-01"
+
+[[extensions]]
+type = "theme"
+name = "CW&T Wholesale UI"
+handle = "wholesale-ui"
+
+  [extensions.development]
+    root_dir = "."

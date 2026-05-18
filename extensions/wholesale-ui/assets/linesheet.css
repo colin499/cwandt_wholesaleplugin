@@ -1,0 +1,305 @@
+/* ==========================================================================
+   CW&T Wholesale Line Sheet — styles
+   Scoped to .wh-linesheet / .wh-ls-* to avoid theme collisions.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Page shell
+   -------------------------------------------------------------------------- */
+.wh-linesheet {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.wh-ls-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.wh-ls-title {
+  font-size: 1.4em;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.wh-ls-subtitle {
+  font-size: 12px;
+  opacity: 0.55;
+  margin: 0;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* --------------------------------------------------------------------------
+   Toolbar buttons
+   -------------------------------------------------------------------------- */
+.wh-ls-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.wh-ls-btn {
+  display: inline-block;
+  padding: 8px 18px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+
+.wh-ls-btn:hover { opacity: 0.65; }
+.wh-ls-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* --------------------------------------------------------------------------
+   Collection sections
+   -------------------------------------------------------------------------- */
+.wh-ls-collection {
+  margin-bottom: 40px;
+  break-inside: avoid;
+}
+
+.wh-ls-collection-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.5;
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid currentColor;
+}
+
+/* --------------------------------------------------------------------------
+   Product table
+   -------------------------------------------------------------------------- */
+.wh-ls-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  table-layout: fixed;
+}
+
+.wh-ls-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.5;
+  padding: 6px 8px;
+  border-bottom: 1px solid currentColor;
+}
+
+.wh-ls-table td {
+  padding: 8px 8px;
+  vertical-align: top;
+  border-bottom: 1px solid currentColor;
+  opacity: 0.9;
+}
+
+.wh-ls-col-img {
+  width: 60px;
+}
+
+.wh-ls-col-title {
+  width: 22%;
+}
+
+.wh-ls-col-price {
+  white-space: nowrap;
+}
+
+.wh-ls-col-wh {
+  font-weight: 500;
+}
+
+.wh-ls-img {
+  width: 54px;
+  height: 54px;
+  object-fit: cover;
+  display: block;
+}
+
+.wh-ls-product-link {
+  color: inherit;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.wh-ls-product-link:hover {
+  text-decoration: underline;
+}
+
+/* Printed title (no hyperlink) hidden on screen */
+.wh-print-only-title {
+  display: none;
+  font-weight: 500;
+}
+
+/* Row continuations — slightly lighter separator */
+.wh-ls-row-cont td {
+  border-bottom-color: currentColor;
+  opacity: 0.7;
+}
+
+/* --------------------------------------------------------------------------
+   Qty column — bundle size selects
+   -------------------------------------------------------------------------- */
+.wh-ls-col-qty {
+  width: 72px;
+  white-space: nowrap;
+}
+
+.wh-ls-qty-select {
+  font-size: 12px;
+  font-family: inherit;
+  padding: 3px 4px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  width: 100%;
+  appearance: auto;
+}
+
+.wh-ls-qty-select:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* --------------------------------------------------------------------------
+   Cart count + Add to Cart button
+   -------------------------------------------------------------------------- */
+.wh-ls-cart-count {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  align-self: center;
+  white-space: nowrap;
+}
+
+.wh-ls-btn--cart {
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------------------------
+   Stock indicators
+   -------------------------------------------------------------------------- */
+.wh-ls-stock--out {
+  opacity: 0.4;
+}
+
+.wh-ls-stock--backorder::before {
+  content: "⟳ ";
+}
+
+/* --------------------------------------------------------------------------
+   Loading / error / empty states
+   -------------------------------------------------------------------------- */
+.wh-ls-loading {
+  font-size: 13px;
+  opacity: 0.5;
+  padding: 24px 0;
+}
+
+.wh-ls-empty,
+.wh-ls-error {
+  font-size: 13px;
+  opacity: 0.6;
+  padding: 16px 0;
+}
+
+.wh-ls-login-prompt {
+  font-size: 14px;
+  padding: 24px 0;
+}
+
+/* --------------------------------------------------------------------------
+   Print styles
+   -------------------------------------------------------------------------- */
+.wh-no-print    { /* applied inline in html, overridden by @media print below */ }
+.wh-print-only  { display: none; }
+
+.wh-ls-print-header {
+  margin-bottom: 20px;
+}
+
+.wh-ls-print-company {
+  font-size: 10pt;
+  font-weight: 600;
+  margin: 0;
+}
+
+.wh-ls-print-title {
+  font-size: 9pt;
+  opacity: 0.55;
+  margin: 2pt 0 0;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+@media print {
+  .wh-no-print      { display: none !important; }
+  .wh-print-only    { display: block !important; }
+
+  /* Replace hyperlinks with plain text on print */
+  .wh-ls-product-link { display: none; }
+  .wh-print-only-title { display: block; }
+
+  .wh-linesheet {
+    font-size: 9pt;
+    color: #000;
+  }
+
+  .wh-ls-collection {
+    break-inside: avoid;
+    margin-bottom: 24pt;
+  }
+
+  .wh-ls-collection-title {
+    font-size: 8pt;
+    border-bottom: 0.5pt solid #000;
+    margin-bottom: 6pt;
+    padding-bottom: 3pt;
+  }
+
+  .wh-ls-table {
+    font-size: 8pt;
+  }
+
+  .wh-ls-table th {
+    font-size: 7pt;
+    padding: 3pt 4pt;
+    border-bottom: 0.5pt solid #000;
+  }
+
+  .wh-ls-table td {
+    padding: 4pt 4pt;
+    border-bottom: 0.3pt solid #ccc;
+    opacity: 1 !important;
+  }
+
+  .wh-ls-img {
+    width: 36pt;
+    height: 36pt;
+  }
+
+  /* Ensure table rows don't split across pages */
+  .wh-ls-table tr {
+    break-inside: avoid;
+  }
+
+  /* Qty column is screen-only — hide in print/PDF */
+  .wh-ls-col-qty { display: none; }
+}

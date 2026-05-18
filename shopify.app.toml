@@ -1,0 +1,59 @@
+name = "cwandt-wholesale"
+client_id = "YOUR_CLIENT_ID_FROM_PARTNER_DASHBOARD"
+application_url = "https://YOUR_APP_URL.fly.dev"
+embedded = true
+handle = "cwandt-wholesale"
+
+[build]
+  automatically_update_urls_on_dev = true
+  dev_store_url = "YOUR_DEV_STORE.myshopify.com"
+  include_config_on_deploy = true
+
+[access_scopes]
+  # read/write customers (tag checking + applying wholesale tag)
+  # read/write products (price display, metafields)
+  # read/write orders (tagging wholesale orders)
+  # read/write inventory (backorder + stock sync)
+  # read/write draft_orders (backorder flow)
+  # read/write shipping (delivery customization functions)
+  # read/write discounts (Shopify Functions)
+  scopes = "read_customers,write_customers,read_products,write_products,read_orders,write_orders,read_inventory,write_inventory,read_draft_orders,write_draft_orders,read_shipping,write_shipping,read_discounts,write_discounts,read_price_rules,write_price_rules"
+
+[auth]
+  redirect_urls = [
+    "https://YOUR_APP_URL.fly.dev/auth/callback",
+    "https://YOUR_APP_URL.fly.dev/auth/shopify/callback",
+    "http://localhost:3000/auth/callback",
+    "http://localhost:3000/auth/shopify/callback"
+  ]
+
+[webhooks]
+  api_version = "2025-01"
+
+  [[webhooks.subscriptions]]
+    topics = ["orders/create", "orders/updated"]
+    uri = "/webhooks"
+
+  [[webhooks.subscriptions]]
+    topics = ["products/update", "products/create"]
+    uri = "/webhooks"
+
+  [[webhooks.subscriptions]]
+    topics = ["inventory_levels/update"]
+    uri = "/webhooks"
+
+  [[webhooks.subscriptions]]
+    topics = ["customers/create", "customers/update"]
+    uri = "/webhooks"
+
+  [[webhooks.subscriptions]]
+    topics = ["app/uninstalled"]
+    uri = "/webhooks"
+
+[app_proxy]
+  url = "https://YOUR_APP_URL.fly.dev/app-proxy"
+  subpath = "wholesale"
+  prefix = "apps"
+
+[pos]
+  embedded = false

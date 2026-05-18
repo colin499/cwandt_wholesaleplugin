@@ -1,0 +1,13 @@
+api_version = "2025-01"
+
+[[extensions]]
+  type = "delivery_customization"
+  name = "Wholesale Free Shipping"
+  handle = "wholesale-free-shipping"
+
+  # Javy compiles src/run.ts → dist/function.wasm via `shopify app function build`.
+  # Run `shopify app build` from the project root to compile before deploying.
+  [extensions.build]
+    command = "npm run build"
+    path = "dist/function.wasm"
+    watch_paths = ["src/**/*.ts"]

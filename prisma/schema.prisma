@@ -1,0 +1,205 @@
+// CW&T Wholesale App — Prisma Schema
+// Local dev: SQLite (strings for status fields — SQLite has no native enum)
+// Production: Switch provider to "postgresql" and DATABASE_URL in .env
+// Enum-like fields are documented with their valid string values in comments.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Shopify OAuth session storage (required by @shopify/shopify-app-remix)
+// ---------------------------------------------------------------------------
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+}
+
+// ---------------------------------------------------------------------------
+// Wholesale customer accounts
+// status: "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED"
+// customerType: "WHOLESALE" | "DISTRIBUTOR"
+// paymentTerms: "CREDIT_CARD" | "NET_30" | "NET_60"
+// minimumOrderValue: per-customer override in USD; null = use global OrderMinimumConfig
+// ---------------------------------------------------------------------------
+model WholesaleCustomer {
+  id                String   @id @default(cuid())
+  shopifyCustomerId String   @unique
+  email             String
+  firstName         String?
+  lastName          String?
+  company           String?
+  phone             String?
+  status            String   @default("PENDING")
+  customerType      String   @default("WHOLESALE")
+  discountPercent   Float    @default(40)
+  paymentTerms      String   @default("CREDIT_CARD")
+  minimumOrderValue Float?
+  approvedAt        DateTime?
+  approvedBy        String?
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  application WholesaleApplication?
+  orders      WholesaleOrder[]
+}
+
+// ---------------------------------------------------------------------------
+// Wholesale account applications
+// status: "PENDING" | "APPROVED" | "REJECTED"
+// ---------------------------------------------------------------------------
+model WholesaleApplication {
+  id                     String    @id @default(cuid())
+  email                  String
+  firstName              String
+  lastName               String
+  company                String
+  website                String?
+  phone                  String?
+  taxId                  String?
+  resaleNumber           String?
+  estimatedMonthlyVolume String?
+  message                String?
+  status                 String    @default("PENDING")
+  reviewedAt             DateTime?
+  reviewedBy             String?
+  rejectionReason        String?
+
+  shopifyCustomerId String?           @unique
+  customer          WholesaleCustomer? @relation(fields: [shopifyCustomerId], references: [shopifyCustomerId])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Pricing rules
+// type: "GLOBAL_DISCOUNT" | "VOLUME_TIER" | "PRODUCT_OVERRIDE"
+// ---------------------------------------------------------------------------
+model PricingRule {
+  id               String   @id @default(cuid())
+  name             String
+  type             String   @default("GLOBAL_DISCOUNT")
+  discountPercent  Float
+  minimumQuantity  Int?
+  minimumCartValue Float?
+  shopifyProductId String?
+  active           Boolean  @default(true)
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Order minimums configuration
+// ---------------------------------------------------------------------------
+model OrderMinimumConfig {
+  id                   String   @id @default(cuid())
+  minimumOrderValue    Float    @default(500)
+  minimumOrderQuantity Int?
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Wholesale orders
+// paymentTerms: "CREDIT_CARD" | "NET_30" | "NET_60"
+// status: "PENDING" | "CONFIRMED" | "FULFILLED" | "CANCELLED"
+// orderTags: JSON array stored as text, e.g. '["wholesale","net-30"]'
+// ---------------------------------------------------------------------------
+model WholesaleOrder {
+  id                  String    @id @default(cuid())
+  shopifyOrderId      String?   @unique
+  shopifyDraftOrderId String?   @unique
+  orderName           String?
+  shopifyCustomerId   String
+  customer            WholesaleCustomer @relation(fields: [shopifyCustomerId], references: [shopifyCustomerId])
+  paymentTerms        String    @default("CREDIT_CARD")
+  totalAmount         Float
+  currency            String?   // ISO 4217, e.g. "USD" — from webhook payload.currency
+  discountPercent     Float
+  isBackorder         Boolean   @default(false)
+  backorderNote       String?
+  orderTags           String    @default("[]")
+  status              String    @default("PENDING")
+  shopifyCreatedAt    DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// App-wide wholesale settings
+// maxDiscountPercent: combined global + volume tier discount can never exceed this
+// ---------------------------------------------------------------------------
+model WholesaleSettings {
+  id                 String   @id @default(cuid())
+  maxDiscountPercent Float    @default(70)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// CMS variant price/MOQ cache
+// Populated by syncCmsDataToDb() from GET /api/wholesale/variants/.
+// shopifyVariantId is the numeric Shopify variant ID stored as a string.
+// Prices stored in cents (CMS returns dollars; multiply × 100 on sync).
+// ---------------------------------------------------------------------------
+model CmsVariantCache {
+  shopifyVariantId      String   @id   // numeric Shopify variant ID as string
+  sku                   String   @default("")
+  wholesalePriceCents   Int      // CMS wholesale_price × 100
+  distributorPriceCents Int      // CMS distributor_price × 100
+  moq                   Int      @default(1)
+  cmsStatus             String   @default("")
+  updatedAt             DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// CMS sync state — singleton row (id = "singleton") tracking last sync run
+// ---------------------------------------------------------------------------
+model CmsSyncState {
+  id           String    @id @default("singleton")
+  lastSyncedAt DateTime?
+  variantCount Int       @default(0)
+  lastError    String?
+  updatedAt    DateTime  @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// CMS sync log
+// syncType: "PRODUCT" | "VARIANT" | "INVENTORY" | "ORDER" | "WHOLESALE_PRICE" | "CUSTOMER"
+// direction: "CMS_TO_APP" | "APP_TO_CMS"
+// status: "SUCCESS" | "FAILED" | "PENDING"
+// payload: JSON stored as text (SQLite has no native JSON column)
+// ---------------------------------------------------------------------------
+model CmsSyncLog {
+  id           String   @id @default(cuid())
+  syncType     String
+  direction    String
+  shopifyId    String?
+  cmsRecordId  String?
+  status       String
+  errorMessage String?
+  payload      String?
+  createdAt    DateTime @default(now())
+}

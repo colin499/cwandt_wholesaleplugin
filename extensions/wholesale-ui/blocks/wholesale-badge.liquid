@@ -1,0 +1,36 @@
+{% comment %}
+  Block: Wholesale Badge / Header Indicator
+  Target: Header section — shows a persistent "Wholesale Account" badge
+  when the logged-in customer has the `wholesale` tag.
+
+  The customer tag check is done server-side in Liquid (no flash).
+  This block should be added to the header or announcement bar section.
+{% endcomment %}
+
+{% if customer and customer.tags contains 'wholesale' %}
+  <div class="wh-account-badge" aria-label="Wholesale account active">
+    <span class="wh-badge-dot"></span>
+    <span class="wh-badge-label">Wholesale</span>
+  </div>
+
+  {% comment %} Meta tag for JavaScript to read without a Storefront API call {% endcomment %}
+  <meta name="wh-customer" content="1">
+{% else %}
+  <meta name="wh-customer" content="0">
+{% endif %}
+
+{% schema %}
+{
+  "name": "Wholesale Badge",
+  "target": "section",
+  "settings": [
+    {
+      "type": "color",
+      "id": "badge_color",
+      "label": "Badge Color",
+      "default": "#000000"
+    }
+  ],
+  "templates": ["*"]
+}
+{% endschema %}

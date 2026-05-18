@@ -1,0 +1,85 @@
+{% comment %}
+  Block: Wholesale Navigation Items
+  Add this block to your header section in the theme editor.
+  Only renders for customers with the `wholesale` tag — invisible to all others.
+
+  The links it renders:
+    • Wholesale Orders  → /account (Shopify customer account orders page)
+    • Line Sheet        → /pages/wholesale (the page.wholesale template)
+
+  No JavaScript required — customer check is server-side Liquid.
+{% endcomment %}
+
+{% if customer and customer.tags contains 'wholesale' %}
+
+  {{ 'wholesale.css' | asset_url | stylesheet_tag }}
+
+  <nav class="wh-nav-items" aria-label="Wholesale navigation">
+    <a
+      href="/account"
+      class="wh-nav-item"
+      aria-label="View wholesale order history"
+    >
+      {{- block.settings.orders_label | default: 'Wholesale Orders' -}}
+    </a>
+
+    <a
+      href="{{ block.settings.line_sheet_url | default: '/pages/wholesale' }}"
+      class="wh-nav-item"
+      aria-label="View wholesale line sheet"
+    >
+      {{- block.settings.line_sheet_label | default: 'Line Sheet' -}}
+    </a>
+
+    {% if block.settings.show_account_link %}
+      <a
+        href="/account"
+        class="wh-nav-item"
+        aria-label="Wholesale account"
+      >
+        {{- block.settings.account_label | default: 'My Account' -}}
+      </a>
+    {% endif %}
+  </nav>
+
+{% endif %}
+
+{% schema %}
+{
+  "name": "Wholesale Navigation",
+  "target": "section",
+  "settings": [
+    {
+      "type": "text",
+      "id": "orders_label",
+      "label": "Orders link label",
+      "default": "Wholesale Orders"
+    },
+    {
+      "type": "text",
+      "id": "line_sheet_label",
+      "label": "Line Sheet link label",
+      "default": "Line Sheet"
+    },
+    {
+      "type": "url",
+      "id": "line_sheet_url",
+      "label": "Line Sheet page URL",
+      "default": "/pages/wholesale"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_account_link",
+      "label": "Show My Account link",
+      "default": false
+    },
+    {
+      "type": "text",
+      "id": "account_label",
+      "label": "Account link label",
+      "default": "My Account"
+    }
+  ],
+  "templates": ["*"]
+}
+{% endschema %}

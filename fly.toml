@@ -1,0 +1,36 @@
+# Fly.io deployment config for CW&T Wholesale App
+# Deploy: fly deploy
+# First time: fly launch (then edit this file)
+
+app = "cwandt-wholesale"
+primary_region = "ewr"  # Newark — closest to Brooklyn
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3000"
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 200
+    soft_limit = 150
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# Secrets to set via `fly secrets set`:
+# SHOPIFY_API_KEY=...
+# SHOPIFY_API_SECRET=...
+# DATABASE_URL=postgresql://...   (use fly postgres for managed Postgres)
+# CMS_BASE_URL=https://cms.cwandt.com
+# CMS_API_TOKEN=...

@@ -1,0 +1,277 @@
+/* ==========================================================================
+   CW&T Wholesale UI — Theme App Extension styles
+   All class names are prefixed with `wh-` to avoid collisions with theme CSS.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Wholesale Account Badge (injected into header)
+   -------------------------------------------------------------------------- */
+.wh-account-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+
+.wh-badge-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.wh-badge-label {
+  line-height: 1;
+}
+
+/* --------------------------------------------------------------------------
+   Wholesale Price Block (product page)
+   -------------------------------------------------------------------------- */
+.wh-price-block {
+  margin-top: 12px;
+}
+
+.wh-price-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+  margin: 0 0 4px;
+}
+
+.wh-price-amount {
+  font-size: 1.4em;
+  font-weight: 500;
+  margin: 0;
+  min-height: 1.4em; /* prevents layout shift while loading */
+}
+
+.wh-price-moq {
+  font-size: 12px;
+  opacity: 0.7;
+  margin: 4px 0 0;
+}
+
+.wh-price-stock {
+  font-size: 12px;
+  margin: 6px 0 0;
+}
+
+.wh-price-stock--out {
+  color: inherit;
+  opacity: 0.6;
+}
+
+.wh-price-discount-note {
+  font-size: 11px;
+  opacity: 0.5;
+  margin: 4px 0 0;
+}
+
+/* Loading skeleton — shown while wholesale prices are fetching */
+.wh-price-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.wh-skeleton-bar {
+  display: block;
+  height: 1em;
+  background: currentColor;
+  opacity: 0.08;
+  border-radius: 2px;
+  animation: wh-pulse 1.4s ease-in-out infinite;
+}
+
+.wh-skeleton-bar:first-child {
+  width: 60%;
+}
+
+.wh-skeleton-bar:last-child {
+  width: 40%;
+}
+
+@keyframes wh-pulse {
+  0%, 100% { opacity: 0.06; }
+  50%       { opacity: 0.14; }
+}
+
+/* --------------------------------------------------------------------------
+   Variant-level in-stock indicator (product page, wholesale only)
+   -------------------------------------------------------------------------- */
+.wh-variant-stock {
+  font-size: 11px;
+  opacity: 0.6;
+  margin-top: 4px;
+}
+
+.wh-variant-stock--backorder::before {
+  content: "⟳ ";
+}
+
+/* --------------------------------------------------------------------------
+   Cart notices (minimum order + free shipping progress)
+   -------------------------------------------------------------------------- */
+.wh-cart-notices {
+  margin-bottom: 16px;
+}
+
+.wh-notice {
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 8px;
+  border-left: 3px solid currentColor;
+}
+
+.wh-notice--warning {
+  opacity: 0.85;
+}
+
+.wh-notice--success {
+  opacity: 0.85;
+}
+
+.wh-shipping-progress {
+  margin-bottom: 8px;
+}
+
+.wh-shipping-label {
+  font-size: 12px;
+  margin: 0 0 6px;
+  opacity: 0.75;
+}
+
+.wh-progress-bar {
+  height: 3px;
+  background: currentColor;
+  opacity: 0.15;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.wh-progress-fill {
+  height: 100%;
+  background: currentColor;
+  opacity: 0.7; /* relative to parent, so ~0.7 * 0.15 opacity total */
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+/* --------------------------------------------------------------------------
+   Wholesale navigation items
+   -------------------------------------------------------------------------- */
+.wh-nav-items {
+  display: contents; /* slots inline with surrounding nav items */
+}
+
+.wh-nav-item {
+  /* Inherits theme nav link styles */
+}
+
+.wh-nav-separator {
+  display: none; /* only show if there are items before this */
+}
+
+.wh-nav-items:not(:empty) + .wh-nav-separator {
+  display: inline-block;
+  opacity: 0.3;
+  margin: 0 8px;
+}
+
+/* --------------------------------------------------------------------------
+   Backorder form (shown on product page when variant is out of stock)
+   -------------------------------------------------------------------------- */
+.wh-backorder-form {
+  margin-top: 12px;
+}
+
+.wh-backorder-note {
+  font-size: 12px;
+  opacity: 0.7;
+  margin: 0 0 8px;
+}
+
+.wh-backorder-btn {
+  display: inline-block;
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.wh-backorder-btn:hover {
+  opacity: 0.7;
+}
+
+.wh-backorder-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.wh-backorder-msg {
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.wh-backorder-msg--success {
+  opacity: 0.85;
+}
+
+.wh-backorder-msg--error {
+  opacity: 0.7;
+}
+
+.wh-backorder-link {
+  text-decoration: underline;
+  color: inherit;
+}
+
+/* --------------------------------------------------------------------------
+   Print / line sheet styles
+   Applied to the line sheet page only — not injected globally.
+   -------------------------------------------------------------------------- */
+@media print {
+  .wh-no-print {
+    display: none !important;
+  }
+
+  .wh-line-sheet {
+    font-size: 10pt;
+  }
+
+  .wh-line-sheet table {
+    width: 100%;
+    border-collapse: collapse;
+    page-break-inside: auto;
+  }
+
+  .wh-line-sheet tr {
+    page-break-inside: avoid;
+  }
+
+  .wh-line-sheet th,
+  .wh-line-sheet td {
+    border: 1px solid #ddd;
+    padding: 4pt 6pt;
+    text-align: left;
+  }
+
+  .wh-line-sheet th {
+    background: #f5f5f5;
+    font-weight: 600;
+  }
+}

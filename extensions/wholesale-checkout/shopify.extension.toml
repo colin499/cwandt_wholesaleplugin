@@ -1,0 +1,25 @@
+api_version = "2025-01"
+
+[[extensions]]
+  type = "ui_extension"
+  name = "Wholesale Cart Validation"
+  handle = "wholesale-cart-validation"
+
+  # Renders a warning block in the checkout if a wholesale customer's cart
+  # doesn't meet the configured minimum order value.
+  [[extensions.targeting]]
+    target = "purchase.checkout.block.render"
+    module = "./src/Checkout.tsx"
+
+  # Reads the wholesale.status metafield set on customers by this app when
+  # they are approved, suspended, or rejected from the admin.
+  [[extensions.metafields]]
+    namespace = "wholesale"
+    key = "status"
+
+  # Per-customer minimum order value override (dollars, stored as string).
+  # Written by app.customers.tsx and app.distributors.tsx when a custom
+  # minimum is saved. If absent, the extension falls back to minimum_order_value setting.
+  [[extensions.metafields]]
+    namespace = "wholesale"
+    key = "minimum_order_value"

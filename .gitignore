@@ -1,0 +1,31 @@
+node_modules
+.DS_Store
+*.log
+
+# Build output
+/build
+/.cache
+
+# Environment — never commit real credentials
+.env
+.env.local
+
+# Prisma local database
+/prisma/dev.db
+/prisma/dev.db-journal
+
+# Shopify CLI
+.shopify
+.graphql_client_cache
+
+# TypeScript cache
+tsconfig.tsbuildinfo
+
+# Vite
+dist
+
+# Claude Code local settings
+.claude/
+
+# Internal documents
+*.pdf

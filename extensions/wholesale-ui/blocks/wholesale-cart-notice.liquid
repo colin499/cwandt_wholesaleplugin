@@ -1,0 +1,81 @@
+{% comment %}
+  Block: Wholesale Cart Notice
+  Target: Cart page / cart drawer section
+  Shows MOQ / minimum order value warnings and free shipping progress.
+  Only visible to wholesale customers. Retail customers see nothing.
+
+  Cart math is done in Liquid (server-side) — no flash.
+{% endcomment %}
+
+{% if customer and customer.tags contains 'wholesale' %}
+
+  {%- assign cart_total = cart.total_price -%}
+  {%- assign minimum_cents = block.settings.minimum_order_value | times: 100 -%}
+  {%- assign free_shipping_cents = block.settings.free_shipping_threshold | times: 100 -%}
+
+  <div class="wh-cart-notices" id="wh-cart-notices">
+
+    {%- if cart_total < minimum_cents -%}
+      {%- assign remaining_cents = minimum_cents | minus: cart_total -%}
+      {%- assign remaining_dollars = remaining_cents | divided_by: 100.0 -%}
+      <div class="wh-notice wh-notice--warning" role="alert">
+        <strong>Minimum order not met.</strong>
+        Add {{ remaining_dollars | money }} more to reach the
+        {{ block.settings.minimum_order_value | money }} wholesale minimum.
+      </div>
+    {%- endif -%}
+
+    {%- if block.settings.show_free_shipping_progress -%}
+      {%- if cart_total < free_shipping_cents -%}
+        {%- assign remaining_ship_cents = free_shipping_cents | minus: cart_total -%}
+        {%- assign remaining_ship_dollars = remaining_ship_cents | divided_by: 100.0 -%}
+        {%- assign progress_pct = cart_total | times: 100 | divided_by: free_shipping_cents -%}
+
+        <div class="wh-shipping-progress">
+          <p class="wh-shipping-label">
+            Add {{ remaining_ship_dollars | money }} for free US shipping
+          </p>
+          <div class="wh-progress-bar" role="progressbar"
+            aria-valuenow="{{ progress_pct }}" aria-valuemin="0" aria-valuemax="100">
+            <div class="wh-progress-fill" style="width: {{ progress_pct }}%;"></div>
+          </div>
+        </div>
+      {%- else -%}
+        <div class="wh-notice wh-notice--success">
+          Free shipping on this US order
+        </div>
+      {%- endif -%}
+    {%- endif -%}
+
+  </div>
+
+{% endif %}
+
+{% schema %}
+{
+  "name": "Wholesale Cart Notice",
+  "target": "section",
+  "settings": [
+    {
+      "type": "number",
+      "id": "minimum_order_value",
+      "label": "Minimum Order Value (USD)",
+      "default": 500
+    },
+    {
+      "type": "checkbox",
+      "id": "show_free_shipping_progress",
+      "label": "Show free shipping progress bar",
+      "default": true
+    },
+    {
+      "type": "number",
+      "id": "free_shipping_threshold",
+      "label": "Free Shipping Threshold (USD)",
+      "default": 500,
+      "info": "Set to 0 for always-free shipping on US wholesale orders"
+    }
+  ],
+  "templates": ["cart"]
+}
+{% endschema %}

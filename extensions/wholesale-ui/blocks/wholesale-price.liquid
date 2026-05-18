@@ -1,0 +1,93 @@
+{% comment %}
+  Block: Wholesale Price Display
+  Add this block to any product section in the theme editor.
+
+  ── HOW THE LOGIN-DELAY BUG IS FIXED ────────────────────────────────────────
+  The flash of retail price happened because the old approach used JavaScript
+  to check customer status AFTER the page had already painted retail prices.
+
+  This block fixes it with three server-side techniques:
+
+  1. TAG CHECK IN LIQUID — `customer.tags contains 'wholesale'` is evaluated
+     by Shopify's template engine on the server, before any HTML is sent to
+     the browser. There is no async wait, no token timing issue.
+
+  2. CSS VIA {% style %} — for wholesale customers, we inject CSS that hides
+     the theme's retail price elements synchronously. The CSS is in <head>
+     before the price element is even parsed. The retail price is never painted.
+
+  3. META TAG — the wholesale-badge block emits <meta name="wh-customer"
+     content="1"> which wholesale.js reads instantly (no fetch required).
+     JavaScript only fetches actual price *numbers*, never customer *status*.
+  ─────────────────────────────────────────────────────────────────────────────
+{% endcomment %}
+
+{% if customer and customer.tags contains 'wholesale' %}
+
+  {% comment %}
+    Suppress the theme's retail price elements so they are never painted.
+    Using {% style %} injects this into <head> before the body renders.
+    Selectors cover the most common Shopify theme conventions; adjust for
+    your specific theme if needed (inspect the theme's price element classes).
+  {% endcomment %}
+  {% style %}
+    .price,
+    .price__regular,
+    .price__sale,
+    .price--main,
+    .price-item--regular,
+    .price-item--sale,
+    [class*="product__price"],
+    [class*="ProductPrice"] {
+      visibility: hidden !important;
+    }
+  {% endstyle %}
+
+  {% comment %} Load CSS and JS for the wholesale UI. {% endcomment %}
+  {{ 'wholesale.css' | asset_url | stylesheet_tag }}
+  <script src="{{ 'wholesale.js' | asset_url }}" defer></script>
+
+  {% comment %}
+    The price block itself. `hidden` attribute means it starts invisible.
+    wholesale.js removes `hidden` once prices are loaded.
+    `data-wh-product-id` is how wholesale.js finds and activates this block.
+  {% endcomment %}
+  <div
+    id="wh-price-block"
+    class="wh-price-block"
+    data-wh-product-id="{{ product.id }}"
+    hidden
+  >
+    <p class="wh-price-label">Wholesale Price</p>
+    <p class="wh-price-amount" id="wh-price-amount" aria-live="polite">—</p>
+    <p class="wh-price-moq" id="wh-price-moq" hidden></p>
+    <p class="wh-price-stock" id="wh-price-stock"></p>
+    <p class="wh-price-discount-note" id="wh-discount-note"></p>
+  </div>
+
+  {% comment %}
+    Skeleton shown while prices are fetching.
+    Hidden immediately if JS determines this isn't a wholesale customer.
+  {% endcomment %}
+  <div class="wh-price-skeleton" aria-hidden="true">
+    <span class="wh-skeleton-bar"></span>
+    <span class="wh-skeleton-bar"></span>
+  </div>
+
+{% else %}
+
+  {% comment %}
+    Retail visitor or logged-out: render nothing.
+    Retail prices show normally (we do not inject any CSS here).
+  {% endcomment %}
+
+{% endif %}
+
+{% schema %}
+{
+  "name": "Wholesale Price Display",
+  "target": "section",
+  "settings": [],
+  "templates": ["product", "page"]
+}
+{% endschema %}
