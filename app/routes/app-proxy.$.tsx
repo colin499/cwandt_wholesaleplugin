@@ -126,6 +126,16 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const subpath = (params["*"] ?? "").replace(/^\//, "");
 
+  // ── /apps/wholesale/status ──────────────────────────────────────────────
+  // Lightweight wholesale status check — DB only, no Storefront API call.
+  // Used by wholesale.js as an async fallback on pages without the badge block.
+  if (subpath === "status") {
+    const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");
+    const session = await getWholesaleSession(shopifyCustomerId);
+    if (!session) return notWholesale();
+    return proxyJson({ wholesale: true, customerType: session.customerType });
+  }
+
   // ── /apps/wholesale/order-minimums ──────────────────────────────────────
   if (subpath === "order-minimums") {
     // logged_in_customer_id is HMAC-signed — safe to use after appProxy verification.

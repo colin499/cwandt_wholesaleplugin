@@ -1,76 +1,89 @@
 import {
-  reactExtension,
+  extension,
   Banner,
   Text,
-  useCartLines,
-  useCustomer,
-  useAppMetafields,
-} from "@shopify/ui-extensions-react/checkout";
+  Select,
+} from "@shopify/ui-extensions/checkout";
 
-export default reactExtension(
-  "purchase.checkout.block.render",
-  () => <WholesaleCartValidation />
-);
+export default extension("purchase.checkout.block.render", (root, api) => {
+  const { cartLines, appMetafields, buyerIdentity, applyAttributeChange } = api;
 
-function WholesaleCartValidation() {
-  const customer = useCustomer();
-  const cartLines = useCartLines();
+  // Persists the customer's selection across re-renders triggered by subscriptions.
+  let selectedTerms = "credit_card";
 
-  // wholesale.status: set by the app on approve/suspend/reject.
-  const statusMetafields = useAppMetafields({ namespace: "wholesale", key: "status" });
-  const wholesaleStatus = statusMetafields[0]?.metafield?.value;
+  function render() {
+    root.removeChildren();
 
-  // wholesale.minimum_order_value: per-customer override (dollars as string), written by
-  // app.customers.tsx / app.distributors.tsx when a custom minimum is saved.
-  const minMetafields = useAppMetafields({ namespace: "wholesale", key: "minimum_order_value" });
-  const perCustomerMin = minMetafields[0]?.metafield?.value;
+    const customer = buyerIdentity.customer.current;
+    if (!customer) return;
 
-  // wholesale.global_minimum_order_value: shop-level metafield written by app.pricing.tsx
-  // whenever the global minimum is saved. No manual checkout editor sync needed.
-  const globalMinMetafields = useAppMetafields({
-    namespace: "wholesale",
-    key: "global_minimum_order_value",
-    ownerType: "shop",
-  });
-  const globalMin = globalMinMetafields[0]?.metafield?.value;
-
-  if (!customer) return null;
-  if (wholesaleStatus !== "approved") return null;
-
-  // Per-customer override > global shop metafield > hardcoded fallback.
-  const minValueDollars = perCustomerMin
-    ? Number(perCustomerMin)
-    : Number(globalMin ?? 500);
-
-  const cartTotalDollars = cartLines.reduce((sum, line) => {
-    return sum + parseFloat(line.cost.totalAmount.amount);
-  }, 0);
-
-  const errors: string[] = [];
-
-  if (cartTotalDollars < minValueDollars) {
-    const remaining = (minValueDollars - cartTotalDollars).toFixed(2);
-    errors.push(
-      `Wholesale orders require a minimum of $${minValueDollars.toFixed(2)}. ` +
-        `Add $${remaining} more to continue.`
+    const statusMeta = appMetafields.current.find(
+      (m) =>
+        m.metafield?.namespace === "wholesale" &&
+        m.metafield?.key === "status"
     );
+    if (statusMeta?.metafield?.value !== "approved") return;
+
+    // ── Minimum order warning ─────────────────────────────────────────────
+    const perCustomerMin = appMetafields.current.find(
+      (m) =>
+        m.metafield?.namespace === "wholesale" &&
+        m.metafield?.key === "minimum_order_value"
+    )?.metafield?.value;
+
+    const globalMin = appMetafields.current.find(
+      (m) =>
+        m.metafield?.namespace === "wholesale" &&
+        m.metafield?.key === "global_minimum_order_value"
+    )?.metafield?.value;
+
+    const minValueDollars = perCustomerMin
+      ? Number(perCustomerMin)
+      : Number(globalMin ?? 500);
+
+    const cartTotalDollars = cartLines.current.reduce((sum, line) => {
+      return sum + parseFloat(line.cost.totalAmount.amount);
+    }, 0);
+
+    if (cartTotalDollars < minValueDollars) {
+      const remaining = (minValueDollars - cartTotalDollars).toFixed(2);
+      const message =
+        `Wholesale orders require a minimum of $${minValueDollars.toFixed(2)}. ` +
+        `Add $${remaining} more to continue.`;
+
+      const banner = root.createComponent(Banner, {
+        status: "warning",
+        title: "Wholesale order requirements not met",
+      });
+      banner.appendChild(root.createComponent(Text, {}, message));
+      root.appendChild(banner);
+    }
+
+    // ── Payment terms selector ────────────────────────────────────────────
+    // Stored as order attribute `_payment_terms` so the webhook handler and
+    // the admin order view can both read it.
+    const select = root.createComponent(Select, {
+      label: "Payment Terms",
+      options: [
+        { label: "Pay by card at checkout", value: "credit_card" },
+        { label: "Net 30 — invoice due within 30 days", value: "net-30" },
+        { label: "Net 60 — invoice due within 60 days", value: "net-60" },
+      ],
+      value: selectedTerms,
+      onChange: (value: string) => {
+        selectedTerms = value;
+        void applyAttributeChange({
+          key: "_payment_terms",
+          type: "updateAttribute",
+          value,
+        });
+      },
+    });
+    root.appendChild(select);
   }
 
-  // ── MOQ check (activates when CMS sync populates moq variant metafields) ───
-  // for (const line of cartLines) {
-  //   const moq = Number(line.merchandise.product?.metafield?.value ?? 1);
-  //   if (line.quantity < moq) {
-  //     errors.push(`${line.merchandise.title}: minimum order quantity is ${moq} units.`);
-  //   }
-  // }
-
-  if (errors.length === 0) return null;
-
-  return (
-    <Banner status="warning" title="Wholesale order requirements not met">
-      {errors.map((error, idx) => (
-        <Text key={idx}>{error}</Text>
-      ))}
-    </Banner>
-  );
-}
+  cartLines.subscribe(render);
+  appMetafields.subscribe(render);
+  buyerIdentity.customer.subscribe(render);
+  render();
+});

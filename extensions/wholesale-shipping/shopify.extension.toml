@@ -1,4 +1,5 @@
 api_version = "2025-01"
+uid = "bd77fc26-3690-10de-3f41-fbfd25db9aec9080051f"
 
 [[extensions]]
   type = "delivery_customization"

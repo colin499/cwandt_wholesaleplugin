@@ -26,17 +26,36 @@
   var SK_PRICES = "wh_prices_";  // + productId → JSON
 
   /* -------------------------------------------------------------------------
-     1. Determine wholesale status — synchronous, no async fetch
+     1. Determine wholesale status
+        Fast path: sessionStorage cache (instant, all pages after first visit)
+        Fast path: <meta name="wh-customer"> set by badge block (instant, product pages)
+        Async fallback: /apps/wholesale/status endpoint (other pages, first visit only)
      ---------------------------------------------------------------------- */
 
-  function getWholesaleStatus() {
+  function resolveWholesaleStatus(callback) {
     var cached = sessionStorage.getItem(SK_STATUS);
-    if (cached !== null) return cached === "1";
+    if (cached !== null) { callback(cached === "1"); return; }
 
     var meta = document.querySelector('meta[name="wh-customer"]');
-    var isWholesale = !!meta && meta.getAttribute("content") === "1";
-    sessionStorage.setItem(SK_STATUS, isWholesale ? "1" : "0");
-    return isWholesale;
+    if (meta) {
+      var fromMeta = meta.getAttribute("content") === "1";
+      sessionStorage.setItem(SK_STATUS, fromMeta ? "1" : "0");
+      callback(fromMeta);
+      return;
+    }
+
+    // No meta tag on this page — ask the server (result cached in sessionStorage).
+    fetch("/apps/wholesale/status", { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var isWholesale = !!(data && data.wholesale);
+        sessionStorage.setItem(SK_STATUS, isWholesale ? "1" : "0");
+        callback(isWholesale);
+      })
+      .catch(function () {
+        sessionStorage.setItem(SK_STATUS, "0");
+        callback(false);
+      });
   }
 
   /* -------------------------------------------------------------------------
@@ -332,16 +351,7 @@
      10. Main init
      ---------------------------------------------------------------------- */
 
-  function init() {
-    var isWholesale = getWholesaleStatus();
-
-    if (!isWholesale) {
-      document.querySelectorAll(".wh-price-skeleton").forEach(function (el) {
-        el.setAttribute("hidden", "");
-      });
-      return;
-    }
-
+  function runWholesaleUI() {
     var priceBlocks = document.querySelectorAll("[data-wh-product-id]");
     priceBlocks.forEach(function (block) {
       var productId = block.dataset
@@ -369,6 +379,18 @@
         applyVariantPrice(data.variants, selectedId, productForm);
         watchVariantChanges(productForm, data.variants);
       });
+    });
+  }
+
+  function init() {
+    resolveWholesaleStatus(function (isWholesale) {
+      if (!isWholesale) {
+        document.querySelectorAll(".wh-price-skeleton").forEach(function (el) {
+          el.setAttribute("hidden", "");
+        });
+        return;
+      }
+      runWholesaleUI();
     });
   }
 

@@ -27,9 +27,10 @@ export default defineConfig({
     assetsInlineLimit: 0,
   },
   server: {
-    port: Number(process.env.PORT || 3000),
+    port: 61733,
     cors: true,
     strictPort: true,
+    allowedHosts: true,
   },
   optimizeDeps: {
     include: ["@shopify/app-bridge-react"],

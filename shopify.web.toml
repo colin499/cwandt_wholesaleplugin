@@ -1,0 +1,7 @@
+type = "backend"
+name = "app"
+
+[commands]
+dev = "npx remix vite:dev"
+build = "npm run build"
+deploy = "npm run start"

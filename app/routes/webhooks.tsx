@@ -59,8 +59,15 @@ async function handleOrderWebhook(payload: Record<string, unknown>) {
 
   const isWholesale = tags.includes("wholesale");
   const isBackorder = tags.includes("backorder");
-  const isNet30 = tags.includes("net-30");
-  const isNet60 = tags.includes("net-60");
+
+  // Payment terms: read from order attribute set by the checkout extension,
+  // with tag-based fallback for orders placed via other means (e.g. draft orders).
+  const noteAttributes = Array.isArray(payload.note_attributes)
+    ? (payload.note_attributes as Array<{ name: string; value: string }>)
+    : [];
+  const paymentTermsAttr = noteAttributes.find((a) => a.name === "_payment_terms")?.value ?? "";
+  const isNet30 = tags.includes("net-30") || paymentTermsAttr === "net-30";
+  const isNet60 = tags.includes("net-60") || paymentTermsAttr === "net-60";
 
   if (!isWholesale) return;
 
