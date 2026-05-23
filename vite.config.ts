@@ -9,6 +9,16 @@ declare module "@remix-run/node" {
   }
 }
 
+// Standard Shopify dev integration: the CLI launches this web process with PORT,
+// SHOPIFY_APP_URL (the tunnel) and FRONTEND_PORT set, and proxies the embedded app
+// to PORT. Do NOT hardcode the port — it must match what the CLI assigns, or the
+// CLI proxy forwards to the wrong port and the app times out / shows "Invalid path /".
+const host = new URL(process.env.SHOPIFY_APP_URL || "http://localhost").hostname;
+const hmrConfig =
+  host === "localhost"
+    ? { protocol: "ws", host: "localhost", port: 64999, clientPort: 64999 }
+    : { protocol: "wss", host, port: Number(process.env.FRONTEND_PORT) || 8002, clientPort: 443 };
+
 export default defineConfig({
   plugins: [
     remix({
@@ -27,10 +37,10 @@ export default defineConfig({
     assetsInlineLimit: 0,
   },
   server: {
-    port: 61733,
+    port: Number(process.env.PORT || 3000),
     cors: true,
-    strictPort: true,
     allowedHosts: true,
+    hmr: hmrConfig,
   },
   optimizeDeps: {
     include: ["@shopify/app-bridge-react"],

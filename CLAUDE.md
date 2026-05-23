@@ -12,6 +12,45 @@ Remix + TypeScript + Prisma + Shopify App Extensions.
 - **Storefront**: Theme App Extensions only — never edit theme files directly
 - **API version**: Shopify January 2025
 
+## Local Development
+
+Run dev with **`./dev-start.sh`** — it runs standard `shopify app dev`. The CLI manages **one**
+cloudflare tunnel that serves both the embedded app and the extensions, and auto-updates
+`application_url`, redirect URLs, and `[app_proxy].url` in the Partner Dashboard
+(`automatically_update_urls_on_dev = true`). Wait for `✅ Ready, watching for changes`, then press
+`p` to open the preview. No manual Partner-Dashboard URL editing is needed.
+
+**cloudflared must be the Homebrew build, not the CLI's bundled one.** The bundled binary
+(2024.8.2) is rejected by Cloudflare's edge (`Register tunnel error … "Unauthorized: Tunnel not
+found"`) — the tunnel dies within the hour and the CLI freezes at "Preparing dev preview".
+`dev-start.sh` forces the current binary via `SHOPIFY_CLI_CLOUDFLARED_PATH`. One-time prereq:
+`brew install cloudflared`.
+
+**Two config invariants — do NOT revert these (reverting either causes `Invalid path /`):**
+- `shopify.web.toml` must include the **`frontend`** role (`roles = ["background", "frontend"]`).
+  With `type = "backend"` the CLI proxy refuses to serve `/`.
+- `vite.config.ts` `server.port` must be **`Number(process.env.PORT || 3000)`** (HMR derived from
+  `SHOPIFY_APP_URL` / `FRONTEND_PORT`). Never hardcode `61733` / `strictPort` — the CLI assigns the
+  frontend port and proxies to it; a hardcoded port makes the proxy forward nowhere → timeout.
+
+**Do NOT reintroduce `dev-proxy.mjs` or `shopify app dev --tunnel-url`.** That was an abandoned
+workaround for the stale-cloudflared problem; it is incompatible with standard dev and caused
+multi-day freezes. `dev-proxy.mjs` is now dead code.
+
+**iCloud sync caveat:** this repo lives under `~/Documents/CW&T`, covered by iCloud "Desktop &
+Documents" sync. Sync periodically creates `" 2"` duplicate binaries inside `node_modules` (e.g.
+`@esbuild/.../bin/esbuild 2`) and can corrupt the originals, breaking builds confusingly.
+**Strongly consider moving the repo out of the synced folder** (or excluding `node_modules`).
+
+### Troubleshooting "the dev server is broken"
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Frozen at "Preparing dev preview"; cloudflared log loops `Unauthorized: Tunnel not found` | Stale bundled cloudflared rejected by Cloudflare edge | `brew install cloudflared` (already wired via `SHOPIFY_CLI_CLOUDFLARED_PATH`); Ctrl+C and re-run `./dev-start.sh` |
+| Preview page says `Invalid path /…` | `shopify.web.toml` not `frontend`, or `vite.config.ts` hardcodes the port | Restore the two invariants above; restart dev |
+| An extension/function build hangs silently (proc alive, 0% CPU, no output) | `shopify app function build` with a recursive `build.command` deadlocking on the `.build-lock` dir | The shipping function is parked in `_disabled_extensions/`; see Delivery Customization below |
+| `Host version X does not match binary Y`, or weird esbuild failures | iCloud sync corrupted an esbuild binary | `find node_modules -name "* 2"`, then `npm ci`; move repo off iCloud |
+
 ## Build Status
 
 - [x] Step 1: App scaffolded (Remix, TypeScript, Shopify CLI)
@@ -21,7 +60,8 @@ Remix + TypeScript + Prisma + Shopify App Extensions.
 - [x] Step 5: Out-of-stock / backorder (Draft Order API bypass)
 - [x] Step 6: Cart validation (min cart value — Checkout UI Extension)
 - [x] Step 7: HTML line sheet (client-side print CSS + html2pdf.js)
-- [x] Step 8: Shipping rule (Shopify Functions Delivery Customization)
+- [~] Step 8: Shipping rule (Shopify Functions Delivery Customization) — code written, but the
+      function **never built** and is currently DISABLED (parked in `_disabled_extensions/`). See below.
 - [ ] Step 9: CMS sync (GET /api/wholesale/variants/ endpoint on cms.cwandt.com)
 - [ ] Step 10: Admin dashboard polish
 
@@ -100,6 +140,17 @@ Settings → Checkout → Customize. Without adding the block, it renders nothin
 
 ## Delivery Customization Function (Step 8)
 
+> **CURRENTLY DISABLED.** This function is parked in `_disabled_extensions/wholesale-shipping/`
+> (out of the `extensions/` scan path) because it never had a working build. Its
+> `shopify.extension.toml` set `[extensions.build].command = "npm run build"`, and the npm
+> `build` script is itself `shopify app function build` — so the build recursively re-invoked
+> itself and deadlocked on the directory `.build-lock`, hanging the CLI forever at "Preparing
+> dev preview". This CLI (3.73) requires an explicit build command and does NOT build JS
+> functions natively, and the extension has no real toolchain (no Javy/bundler deps). To
+> re-enable: move it back into `extensions/` AND set up a real JS→WASM build (bundle `src/run.ts`
+> + Javy → `dist/function.wasm`) with a **non-recursive** build command. Everything else (admin
+> app, `wholesale-ui`, `wholesale-checkout`) runs without it.
+
 `extensions/wholesale-shipping/` — hides all shipping options that cost > $0 for approved
 wholesale customers with a US shipping address. Non-wholesale buyers and non-US addresses
 see normal shipping rates unaffected.
@@ -116,8 +167,10 @@ silently if the function isn't deployed yet (safe to call on every re-auth).
 1. In Shopify Admin → Settings → Shipping and delivery → Manage rates: add a **$0 shipping
    rate** named "Wholesale Free Shipping" for the US zone. Without this rate, the function
    will hide ALL shipping options and the checkout will stall with no rates available.
-2. Run `shopify app build` to compile `src/run.ts` → `dist/function.wasm` before deploying.
-   The CLI handles this automatically during `shopify app dev`.
+2. Set up a working JS→WASM build first (see the DISABLED note above) — the build does **not**
+   work as-is and is NOT handled automatically by `shopify app dev` (it deadlocks). Once a
+   non-recursive build command produces `dist/function.wasm`, move the extension back into
+   `extensions/`.
 
 **Scope of "free"**: US only. International wholesale orders see normal rates. If CW&T wants
 free international wholesale shipping in the future, change the `isUS` check in `src/run.ts`.

@@ -1,5 +1,5 @@
-type = "backend"
 name = "app"
+roles = ["background", "frontend"]
 
 [commands]
 dev = "npx remix vite:dev"
