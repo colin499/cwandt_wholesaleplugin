@@ -34,18 +34,17 @@ import {
 } from "../lib/cms-client.server";
 import { db } from "../db.server";
 
-// Storefront API query — fetches all published products for the line sheet (paginated).
+// Admin API query — fetches products for the line sheet (paginated).
 const LINESHEET_QUERY = `
   query GetLinesheetProducts($first: Int!, $after: String) {
+    shop { currencyCode }
     products(first: $first, after: $after) {
       edges {
         node {
           id
           title
           handle
-          images(first: 1) {
-            nodes { url altText }
-          }
+          featuredImage { url altText }
           collections(first: 1) {
             nodes { title handle }
           }
@@ -55,8 +54,8 @@ const LINESHEET_QUERY = `
               title
               sku
               availableForSale
-              quantityAvailable
-              price { amount currencyCode }
+              inventoryQuantity
+              price
             }
           }
         }
@@ -66,9 +65,12 @@ const LINESHEET_QUERY = `
   }
 `;
 
-// Storefront API query — fetches variant prices and inventory for a product.
+// Admin API query — fetches variant prices and inventory for a product.
+// (Uses the Admin API, not the Storefront API: the app has read_products/read_inventory
+// admin scopes but no unauthenticated_* Storefront scopes, so the Storefront API returns 403.)
 const PRODUCT_QUERY = `
   query GetProductVariants($id: ID!) {
+    shop { currencyCode }
     product(id: $id) {
       id
       title
@@ -79,11 +81,8 @@ const PRODUCT_QUERY = `
           title
           sku
           availableForSale
-          quantityAvailable
-          price {
-            amount
-            currencyCode
-          }
+          inventoryQuantity
+          price
           selectedOptions {
             name
             value
@@ -112,12 +111,10 @@ function proxyJson(data: unknown) {
 // ── GET handler ──────────────────────────────────────────────────────────────
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const proxyResult = await authenticate.public.appProxy(request);
-  const storefront = proxyResult.storefront;
-
-  if (!storefront) {
-    return json({ error: "Storefront unavailable" }, { status: 503 });
-  }
+  // Verifies the HMAC signature; logged_in_customer_id / shop in the query params are
+  // trustworthy afterward. Product data is fetched via the Admin API (unauthenticated.admin)
+  // rather than the Storefront API, which the app lacks unauthenticated_* scopes for.
+  await authenticate.public.appProxy(request);
 
   // Kick off a background CMS cache refresh if data is stale (fire-and-forget).
   // Does nothing if CMS_BASE_URL / CMS_API_TOKEN are not set.
@@ -157,22 +154,31 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
     // Paginate through ALL published products — no artificial cap.
     // Shopify's API guarantees endCursor is defined whenever hasNextPage is true.
+    // `shop` is in the HMAC-signed query params — safe after appProxy verification.
+    const shop = url.searchParams.get("shop");
+    if (!shop) {
+      return json({ error: "Missing shop param" }, { status: 400 });
+    }
+    const { admin } = await unauthenticated.admin(shop);
+
     const allNodes: any[] = [];
+    let shopCurrency = "USD";
     let hasNextPage = true;
     let cursor: string | null = null;
 
     while (hasNextPage) {
       let result: any;
       try {
-        result = await storefront.graphql(LINESHEET_QUERY, {
+        result = await admin.graphql(LINESHEET_QUERY, {
           variables: { first: 50, after: cursor },
         });
       } catch (err) {
-        console.error("[app-proxy/linesheet-data] Storefront API error:", err);
+        console.error("[app-proxy/linesheet-data] Admin API error:", err);
         return json({ error: "Failed to fetch products" }, { status: 502 });
       }
 
       const body = await result.json();
+      shopCurrency = body.data?.shop?.currencyCode ?? shopCurrency;
       const products = body.data?.products;
       if (!products) break;
 
@@ -204,7 +210,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
       const variants = product.variants.nodes.map((v: any) => {
         const variantId = parseInt(v.id.split("/").pop(), 10);
-        const retailCents = Math.round(parseFloat(v.price.amount) * 100);
+        const retailCents = Math.round(parseFloat(v.price) * 100);
         const cms = cmsMap.get(String(variantId));
 
         let whPrice: number;
@@ -220,9 +226,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           sku: v.sku ?? "",
           retail_price: retailCents,
           wh_price: whPrice,
-          currency_code: v.price.currencyCode,
+          currency_code: shopCurrency,
           available: v.availableForSale,
-          in_stock: v.quantityAvailable ?? 0,
+          in_stock: v.inventoryQuantity ?? 0,
           moq: cms?.moq ?? 1,
         };
       });
@@ -231,7 +237,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         id: parseInt(product.id.split("/").pop(), 10),
         title: product.title,
         handle: product.handle,
-        image_url: product.images?.nodes?.[0]?.url ?? null,
+        image_url: product.featuredImage?.url ?? null,
         variants,
       });
     }
@@ -259,16 +265,23 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const baseDiscount = await getActiveGlobalDiscount(session.discountPercent);
     const effectiveDiscount = await applyVolumeTier(baseDiscount, qty);
 
+    // `shop` is in the HMAC-signed query params — safe after appProxy verification.
+    const shop = url.searchParams.get("shop");
+    if (!shop) {
+      return json({ error: "Missing shop param" }, { status: 400 });
+    }
+
     let productData: any;
+    let shopCurrency = "USD";
     try {
+      const { admin } = await unauthenticated.admin(shop);
       const gid = `gid://shopify/Product/${productId}`;
-      const result = await storefront.graphql(PRODUCT_QUERY, {
-        variables: { id: gid },
-      });
+      const result = await admin.graphql(PRODUCT_QUERY, { variables: { id: gid } });
       const body = await result.json();
       productData = body.data?.product;
+      shopCurrency = body.data?.shop?.currencyCode ?? "USD";
     } catch (err) {
-      console.error("[app-proxy] Storefront API error:", err);
+      console.error("[app-proxy] Admin API error:", err);
       return json({ error: "Failed to fetch product data" }, { status: 502 });
     }
 
@@ -283,7 +296,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const isDistributor = session.customerType === "DISTRIBUTOR";
 
     const variants = productData.variants.nodes.map((v: any) => {
-      const retailCents = Math.round(parseFloat(v.price.amount) * 100);
+      const retailCents = Math.round(parseFloat(v.price) * 100);
       const variantNumericId = v.id.split("/").pop();
       const variantId = parseInt(variantNumericId, 10);
       const cms = cmsMap.get(String(variantId));
@@ -304,11 +317,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         wh_price: whPrice,
         discount_percent: effectiveDiscount,
         available: v.availableForSale,
-        in_stock: v.quantityAvailable ?? 0,
+        in_stock: v.inventoryQuantity ?? 0,
         moq: cms?.moq ?? 1,
         selected_options: v.selectedOptions,
         image_url: v.image?.url ?? null,
-        currency_code: v.price.currencyCode,
+        currency_code: shopCurrency,
       };
     });
 
