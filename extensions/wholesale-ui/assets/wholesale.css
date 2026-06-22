@@ -275,3 +275,17 @@
     font-weight: 600;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Catalog-card wholesale price label (collection / search / home pages).
+   Appended next to the theme's retail price — intentionally understated so it
+   sits naturally beside the existing price without restyling the card.
+   --------------------------------------------------------------------------- */
+.wh-card-price {
+  display: block;
+  margin-top: 2px;
+  font-weight: 600;
+  color: #1a1a1a;
+  font-size: 0.95em;
+  line-height: 1.2;
+}

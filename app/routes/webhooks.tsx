@@ -147,9 +147,9 @@ async function handleCustomerWebhook(payload: Record<string, unknown>) {
   if (!isWholesale && !isDistributor) return;
 
   // customerType is DISTRIBUTOR if the customer has the distributor tag.
-  // Default discount is 40% for wholesale, 50% for distributor.
+  // Default discount is 50% for wholesale, 50% for distributor.
   const customerType = isDistributor ? "DISTRIBUTOR" : "WHOLESALE";
-  const defaultDiscount = isDistributor ? 50 : 40;
+  const defaultDiscount = isDistributor ? 50 : 50;
 
   await db.wholesaleCustomer.upsert({
     where: { shopifyCustomerId },

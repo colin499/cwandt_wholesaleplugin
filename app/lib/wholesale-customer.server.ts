@@ -56,7 +56,7 @@ export async function getWholesaleSession(
  * Volume-tier rules are checked separately via applyVolumeTier().
  */
 export async function getActiveGlobalDiscount(
-  fallbackPercent = 40
+  fallbackPercent = 50
 ): Promise<number> {
   const rule = await db.pricingRule.findFirst({
     where: { type: "GLOBAL_DISCOUNT", active: true },

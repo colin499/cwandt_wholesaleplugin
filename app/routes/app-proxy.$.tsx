@@ -97,6 +97,23 @@ const PRODUCT_QUERY = `
   }
 `;
 
+// Admin API query — fetches variant prices for a batch of products by handle.
+// Used by the catalog-card price labels (collection / search / home pages).
+const CATALOG_QUERY = `
+  query GetCatalogProducts($q: String!, $first: Int!) {
+    shop { currencyCode }
+    products(first: $first, query: $q) {
+      nodes {
+        id
+        handle
+        variants(first: 100) {
+          nodes { id price availableForSale }
+        }
+      }
+    }
+  }
+`;
+
 function notWholesale() {
   return json(
     { wholesale: false },
@@ -131,6 +148,83 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const session = await getWholesaleSession(shopifyCustomerId);
     if (!session) return notWholesale();
     return proxyJson({ wholesale: true, customerType: session.customerType });
+  }
+
+  // ── /apps/wholesale/catalog-prices ──────────────────────────────────────
+  // Batch wholesale "from" prices for product cards on collection/search/home
+  // pages. Input: ?handles=a,b,c (comma-separated, capped at 50). Returns the
+  // min wholesale price per product so the storefront can show "Wholesale $X"
+  // beside the retail price on each card. CMS-aware with flat-discount fallback.
+  if (subpath === "catalog-prices") {
+    const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");
+    const session = await getWholesaleSession(shopifyCustomerId);
+    if (!session) return notWholesale();
+
+    const handles = (url.searchParams.get("handles") ?? "")
+      .split(",")
+      .map((h) => h.trim())
+      .filter(Boolean)
+      .slice(0, 50);
+    if (handles.length === 0) return proxyJson({ wholesale: true, products: {} });
+
+    const shop = url.searchParams.get("shop");
+    if (!shop) return json({ error: "Missing shop param" }, { status: 400 });
+
+    const baseDiscount = await getActiveGlobalDiscount(session.discountPercent);
+    const effectiveDiscount = await applyVolumeTier(baseDiscount, 1);
+    const isDistributor = session.customerType === "DISTRIBUTOR";
+
+    // Shopify product query syntax: handle:a OR handle:b ...
+    const q = handles.map((h) => `handle:${h}`).join(" OR ");
+
+    let nodes: any[] = [];
+    let shopCurrency = "USD";
+    try {
+      const { admin } = await unauthenticated.admin(shop);
+      const result = await admin.graphql(CATALOG_QUERY, {
+        variables: { q, first: handles.length },
+      });
+      const body = await result.json();
+      nodes = body.data?.products?.nodes ?? [];
+      shopCurrency = body.data?.shop?.currencyCode ?? "USD";
+    } catch (err) {
+      console.error("[app-proxy/catalog-prices] Admin API error:", err);
+      return json({ error: "Failed to fetch catalog prices" }, { status: 502 });
+    }
+
+    const allVariantIds = nodes.flatMap((p: any) =>
+      p.variants.nodes.map((v: any) => parseInt(v.id.split("/").pop(), 10))
+    );
+    const cmsMap = await getCmsVariantMap(allVariantIds);
+
+    const products: Record<string, any> = {};
+    for (const p of nodes) {
+      let whMin = Infinity;
+      let whMax = -Infinity;
+      let retailMin = Infinity;
+      for (const v of p.variants.nodes) {
+        const retailCents = Math.round(parseFloat(v.price) * 100);
+        const cms = cmsMap.get(String(v.id.split("/").pop()));
+        const wh = cms
+          ? isDistributor
+            ? cms.distributorPriceCents
+            : cms.wholesalePriceCents
+          : calculateWholesalePrice(retailCents, effectiveDiscount);
+        if (wh < whMin) whMin = wh;
+        if (wh > whMax) whMax = wh;
+        if (retailCents < retailMin) retailMin = retailCents;
+      }
+      if (whMin === Infinity) continue;
+      products[p.handle] = {
+        wh_min: whMin,
+        wh_max: whMax,
+        retail_min: retailMin === Infinity ? null : retailMin,
+        varies: whMax !== whMin,
+        currency_code: shopCurrency,
+      };
+    }
+
+    return proxyJson({ wholesale: true, currency_code: shopCurrency, products });
   }
 
   // ── /apps/wholesale/order-minimums ──────────────────────────────────────

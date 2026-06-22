@@ -27,7 +27,7 @@ async function main() {
 
   // --- Pricing rules ---
   const rules = [
-    { name: "Standard Wholesale Discount", type: "GLOBAL_DISCOUNT", discountPercent: 40, active: true, sortOrder: 0 },
+    { name: "Standard Wholesale Discount", type: "GLOBAL_DISCOUNT", discountPercent: 50, active: true, sortOrder: 0 },
     { name: "Bulk Tier — 25+ units", type: "VOLUME_TIER", discountPercent: 5, minimumQuantity: 25, active: true, sortOrder: 1 },
     { name: "Bulk Tier — 50+ units", type: "VOLUME_TIER", discountPercent: 10, minimumQuantity: 50, active: true, sortOrder: 2 },
   ];
@@ -45,9 +45,9 @@ async function main() {
   //     These use placeholder Shopify IDs — fine to display; do NOT edit them live in the
   //     demo (the Shopify GraphQL call would no-op). Use the Approve/Create flows for live actions.
   const customers = [
-    { shopifyCustomerId: "9100000000001", email: "orders@hudsonvalleymercantile.com", firstName: "Dana", lastName: "Whitfield", company: "Hudson Valley Mercantile", status: "APPROVED", customerType: "WHOLESALE", discountPercent: 40, paymentTerms: "NET_30", approvedAt: now },
-    { shopifyCustomerId: "9100000000002", email: "buyer@thecornershop.com", firstName: "Leah", lastName: "Park", company: "The Corner Shop", status: "APPROVED", customerType: "WHOLESALE", discountPercent: 40, paymentTerms: "CREDIT_CARD", approvedAt: now },
-    { shopifyCustomerId: "9100000000003", email: "purchasing@makercollective.com", firstName: "Tomás", lastName: "Rivera", company: "Maker Collective", status: "APPROVED", customerType: "WHOLESALE", discountPercent: 40, paymentTerms: "NET_60", approvedAt: now },
+    { shopifyCustomerId: "9100000000001", email: "orders@hudsonvalleymercantile.com", firstName: "Dana", lastName: "Whitfield", company: "Hudson Valley Mercantile", status: "APPROVED", customerType: "WHOLESALE", discountPercent: 50, paymentTerms: "NET_30", approvedAt: now },
+    { shopifyCustomerId: "9100000000002", email: "buyer@thecornershop.com", firstName: "Leah", lastName: "Park", company: "The Corner Shop", status: "APPROVED", customerType: "WHOLESALE", discountPercent: 50, paymentTerms: "CREDIT_CARD", approvedAt: now },
+    { shopifyCustomerId: "9100000000003", email: "purchasing@makercollective.com", firstName: "Tomás", lastName: "Rivera", company: "Maker Collective", status: "APPROVED", customerType: "WHOLESALE", discountPercent: 50, paymentTerms: "NET_60", approvedAt: now },
     { shopifyCustomerId: "9200000000001", email: "wholesale@northstardistribution.com", firstName: "Erin", lastName: "Gallagher", company: "Northstar Distribution", status: "APPROVED", customerType: "DISTRIBUTOR", discountPercent: 50, paymentTerms: "NET_30", approvedAt: now },
     { shopifyCustomerId: "9200000000002", email: "ap@westcoastsupplyco.com", firstName: "Marcus", lastName: "Bell", company: "West Coast Supply Co.", status: "APPROVED", customerType: "DISTRIBUTOR", discountPercent: 50, paymentTerms: "NET_60", approvedAt: now },
   ];

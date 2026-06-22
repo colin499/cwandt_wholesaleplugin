@@ -50,7 +50,7 @@ model WholesaleCustomer {
   phone             String?
   status            String   @default("PENDING")
   customerType      String   @default("WHOLESALE")
-  discountPercent   Float    @default(40)
+  discountPercent   Float    @default(50)
   paymentTerms      String   @default("CREDIT_CARD")
   minimumOrderValue Float?
   approvedAt        DateTime?

@@ -1,0 +1,34 @@
+{% comment %}
+  App Embed: Wholesale (site-wide)
+  ─────────────────────────────────────────────────────────────────────────────
+  This is an APP EMBED block (target: "body"), not a section block. It is enabled
+  from the theme editor's "App embeds" panel with a single on/off toggle — no
+  section placement required, so it can't be put in the wrong spot or forgotten
+  on a template. This is the robust, site-wide host for the wholesale UI.
+
+  What it does on every page, for logged-in wholesale customers:
+    1. Emits <meta name="wh-customer" content="1"> so wholesale.js knows the
+       customer is wholesale instantly — no async status call, no price flash.
+    2. Loads wholesale.css + wholesale.js, which power:
+         • the product-page wholesale price block, and
+         • the "Wholesale $X" labels on collection / search / home product cards.
+
+  wholesale.js is idempotent (window.__whWholesaleInit guard), so loading it here
+  AND from the product-page price block on a PDP is safe.
+{% endcomment %}
+
+{% if customer and customer.tags contains 'wholesale' %}
+  <meta name="wh-customer" content="1">
+  {{ 'wholesale.css' | asset_url | stylesheet_tag }}
+  <script src="{{ 'wholesale.js' | asset_url }}" defer></script>
+{% else %}
+  <meta name="wh-customer" content="0">
+{% endif %}
+
+{% schema %}
+{
+  "name": "Wholesale (site-wide)",
+  "target": "body",
+  "settings": []
+}
+{% endschema %}
