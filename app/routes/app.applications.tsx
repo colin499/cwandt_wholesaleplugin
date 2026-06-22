@@ -120,7 +120,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         company: application.company,
         phone: application.phone ?? undefined,
         status: "APPROVED",
-        discountPercent: 40,
+        discountPercent: 50,
         paymentTerms: "CREDIT_CARD",
         approvedAt: new Date(),
       },

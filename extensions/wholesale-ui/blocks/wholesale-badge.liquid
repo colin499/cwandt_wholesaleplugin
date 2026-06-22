@@ -13,7 +13,12 @@
     <span class="wh-badge-label">Wholesale</span>
   </div>
 
-  {% comment %} Meta tag for JavaScript to read without a Storefront API call {% endcomment %}
+  {% comment %}
+    Meta tag for JavaScript to read without a Storefront API call.
+    NOTE: the "Wholesale (site-wide)" app embed also emits this meta tag and
+    loads wholesale.js/css globally — that app embed is the canonical loader.
+    This badge block only renders the visible header badge.
+  {% endcomment %}
   <meta name="wh-customer" content="1">
 {% else %}
   <meta name="wh-customer" content="0">
