@@ -116,9 +116,25 @@ prisma/
   schema.prisma                      — SQLite schema (String fields for enum-like values)
 ```
 
-## Checkout UI Extension (Step 6)
+## Checkout UI Extension (Step 6) — PARKED (Plus-only), replaced by cart-notice block
 
-`extensions/wholesale-checkout/` — renders a warning block in the checkout if a wholesale
+> **PARKED 2026-06-23 in `_disabled_extensions/wholesale-checkout/`.** It targets
+> `purchase.checkout.block.render` (the checkout page), and adding app blocks to checkout is a
+> **Shopify Plus–only** feature — this store is **not** on Plus ([[project-not-shopify-plus]]),
+> so the block can't be placed (the checkout editor shows "no blocks available", including on the
+> order-status page, which uses a different target the block doesn't declare). It was advisory
+> only anyway (can't hard-block an order).
+>
+> **Replacement (works on any plan):** the **cart-page** theme block
+> `extensions/wholesale-ui/blocks/wholesale-cart-notice.liquid` ("Wholesale Cart Notice") shows
+> the same minimum-order-not-met warning + free-shipping progress bar, placed on the `cart`
+> template in the theme editor. That is the live path for the minimum-order warning.
+>
+> The extension is still in version `cwandt-wholesale-2` on the store but unplaceable; the next
+> `shopify app deploy` will drop it from the app version. To revive it, move it back into
+> `extensions/` — only worth it if the store upgrades to Shopify Plus.
+
+`_disabled_extensions/wholesale-checkout/` — renders a warning block in the checkout if a wholesale
 customer's cart is below the configured minimum order value.
 
 **Customer detection**: reads the `wholesale.status` customer metafield set by the app
@@ -137,8 +153,9 @@ Order Validation function would be needed (deferred).
 **MOQ check**: structure is in place (commented out) and will activate when CMS sync (Step 9)
 populates `moq` values on variant metafields.
 
-**Important setup step**: The extension must be added to the checkout in Shopify Admin →
-Settings → Checkout → Customize. Without adding the block, it renders nothing.
+**Important setup step (historical / Plus only)**: The extension would be added to the checkout in
+Shopify Admin → Settings → Checkout → Customize. On a non-Plus store this is unavailable; use the
+`wholesale-cart-notice` cart-page block instead (see the PARKED note above).
 
 ## Delivery Customization Function (Step 8)
 

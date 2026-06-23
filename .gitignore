@@ -29,3 +29,9 @@ dist
 
 # Internal documents
 *.pdf
+
+# iCloud "Desktop & Documents" sync duplicates (e.g. "foo 2.js", "build 2")
+# This repo lives under ~/Documents/CW&T; iCloud periodically clones files with
+# a " 2" suffix. Never track them — they corrupt builds and bloat commits.
+* [0-9]
+* [0-9].*
