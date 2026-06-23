@@ -24,14 +24,18 @@ Verified on the **dev store** only. Nothing has touched the live store yet.
 
 ## 🔜 Remaining work (rough priority order)
 
-### 1. Checkout flow — test end to end (never exercised)
-- Add the `wholesale-checkout` Checkout UI extension in **Shopify Admin → Settings → Checkout →
-  Customize** (without adding the block it renders nothing).
-- Run a real test order on the dev store as an approved wholesale customer and confirm:
-  - the **cart-minimum / min-order-value** warning shows when below the configured minimum;
-  - **Net 30 / Net 60** payment terms behave as expected at checkout.
-- Note: Checkout UI extensions are **advisory only** — they warn, they can't hard-block. Hard
-  blocking would need an Order Validation function (deferred).
+### 1. Minimum-order warning — ✅ RESOLVED via cart-page block (2026-06-23)
+- The `wholesale-checkout` Checkout UI extension is **Plus-only** and was **parked**
+  (`_disabled_extensions/wholesale-checkout/`) — this store is not on Plus, so checkout-page app
+  blocks can't be placed. See `CLAUDE.md` "Checkout UI Extension".
+- **Live path:** add the **"Wholesale Cart Notice"** theme block
+  (`wholesale-cart-notice.liquid`) on the **cart** template in the theme editor. It shows the
+  minimum-order-not-met warning + free-shipping progress bar on any plan.
+- **Still to do (manual, theme editor):** place that block on the cart template and set its
+  Minimum Order Value to match Pricing Rules. Then place a test order as an approved wholesale
+  customer and confirm the warning + **Net 30 / Net 60** payment terms behave.
+- Note: this is **advisory only** (warns, can't hard-block). Hard blocking would need an Order
+  Validation function (deferred).
 
 ### 2. Distributor discount rate — decision needed
 - Wholesale default is now **50%**, which is **equal to the distributor default (50%)**.
