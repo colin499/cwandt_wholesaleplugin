@@ -1,0 +1,50 @@
+{
+  "payload": {
+    "export": "cart-delivery-options-transform-run",
+    "target": "cart.delivery-options.transform.run",
+    "input": {
+      "cart": {
+        "buyerIdentity": {
+          "customer": {
+            "metafield": {
+              "value": "approved"
+            }
+          }
+        },
+        "deliveryGroups": [
+          {
+            "id": "gid://shopify/CartDeliveryGroup/0",
+            "deliveryAddress": {
+              "countryCode": "US"
+            },
+            "deliveryOptions": [
+              {
+                "handle": "wholesale-free-shipping",
+                "title": "Wholesale Free Shipping",
+                "cost": {
+                  "amount": "0.0"
+                }
+              },
+              {
+                "handle": "express",
+                "title": "Express",
+                "cost": {
+                  "amount": "24.99"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "output": {
+      "operations": [
+        {
+          "deliveryOptionHide": {
+            "deliveryOptionHandle": "express"
+          }
+        }
+      ]
+    }
+  }
+}

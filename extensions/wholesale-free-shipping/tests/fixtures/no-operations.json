@@ -1,0 +1,35 @@
+{
+  "payload": {
+    "export": "cart-delivery-options-transform-run",
+    "target": "cart.delivery-options.transform.run",
+    "input": {
+      "cart": {
+        "buyerIdentity": {
+          "customer": {
+            "metafield": null
+          }
+        },
+        "deliveryGroups": [
+          {
+            "id": "gid://shopify/CartDeliveryGroup/0",
+            "deliveryAddress": {
+              "countryCode": "US"
+            },
+            "deliveryOptions": [
+              {
+                "handle": "standard",
+                "title": "Standard",
+                "cost": {
+                  "amount": "9.99"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "output": {
+      "operations": []
+    }
+  }
+}

@@ -1,0 +1,24 @@
+query CartDeliveryOptionsTransformRunInput {
+  cart {
+    buyerIdentity {
+      customer {
+        metafield(namespace: "wholesale", key: "status") {
+          value
+        }
+      }
+    }
+    deliveryGroups {
+      id
+      deliveryAddress {
+        countryCode
+      }
+      deliveryOptions {
+        handle
+        title
+        cost {
+          amount
+        }
+      }
+    }
+  }
+}

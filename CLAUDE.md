@@ -48,7 +48,7 @@ Documents" sync. Sync periodically creates `" 2"` duplicate binaries inside `nod
 |---|---|---|
 | Frozen at "Preparing dev preview"; cloudflared log loops `Unauthorized: Tunnel not found` | Stale bundled cloudflared rejected by Cloudflare edge | `brew install cloudflared` (already wired via `SHOPIFY_CLI_CLOUDFLARED_PATH`); Ctrl+C and re-run `./dev-start.sh` |
 | Preview page says `Invalid path /…` | `shopify.web.toml` not `frontend`, or `vite.config.ts` hardcodes the port | Restore the two invariants above; restart dev |
-| An extension/function build hangs silently (proc alive, 0% CPU, no output) | `shopify app function build` with a recursive `build.command` deadlocking on the `.build-lock` dir | The shipping function is parked in `_disabled_extensions/`; see Delivery Customization below |
+| An extension/function build hangs silently (proc alive, 0% CPU, no output) | A function's `[extensions.build].command` recursively re-invokes `shopify app function build`, deadlocking on `.build-lock` | Leave `command = ""` for JS functions — CLI 3.94 builds them natively (esbuild→Javy). Never point `command` at a script that calls `shopify app function build` |
 | `Host version X does not match binary Y`, or weird esbuild failures | iCloud sync corrupted an esbuild binary | `find node_modules -name "* 2"`, then `npm ci`; move repo off iCloud |
 
 ## Build Status
@@ -60,8 +60,10 @@ Documents" sync. Sync periodically creates `" 2"` duplicate binaries inside `nod
 - [x] Step 5: Out-of-stock / backorder (Draft Order API bypass)
 - [x] Step 6: Cart validation (min cart value — Checkout UI Extension)
 - [x] Step 7: HTML line sheet (client-side print CSS + html2pdf.js)
-- [~] Step 8: Shipping rule (Shopify Functions Delivery Customization) — code written, but the
-      function **never built** and is currently DISABLED (parked in `_disabled_extensions/`). See below.
+- [x] Step 8: Shipping rule (Shopify Functions Delivery Customization) — rebuilt 2026-06-23 as a
+      modern JS function (`type = "function"`, target `cart.delivery-options.transform.run`),
+      builds to `dist/function.wasm` via the native CLI 3.94 toolchain, 3 passing integration
+      tests. Lives in `extensions/wholesale-free-shipping/`. See below.
 - [ ] Step 9: CMS sync (GET /api/wholesale/variants/ endpoint on cms.cwandt.com)
 - [ ] Step 10: Admin dashboard polish
 
@@ -140,20 +142,22 @@ Settings → Checkout → Customize. Without adding the block, it renders nothin
 
 ## Delivery Customization Function (Step 8)
 
-> **CURRENTLY DISABLED.** This function is parked in `_disabled_extensions/wholesale-shipping/`
-> (out of the `extensions/` scan path) because it never had a working build. Its
-> `shopify.extension.toml` set `[extensions.build].command = "npm run build"`, and the npm
-> `build` script is itself `shopify app function build` — so the build recursively re-invoked
-> itself and deadlocked on the directory `.build-lock`, hanging the CLI forever at "Preparing
-> dev preview". This CLI (3.73) requires an explicit build command and does NOT build JS
-> functions natively, and the extension has no real toolchain (no Javy/bundler deps). To
-> re-enable: move it back into `extensions/` AND set up a real JS→WASM build (bundle `src/run.ts`
-> + Javy → `dist/function.wasm`) with a **non-recursive** build command. Everything else (admin
-> app, `wholesale-ui`, `wholesale-checkout`) runs without it.
+> **REBUILT & ENABLED (2026-06-23).** Re-scaffolded with `shopify app generate extension
+> --template delivery_customization --flavor typescript` on CLI **3.94.3**, which produces a
+> modern JS function: `type = "function"`, target `cart.delivery-options.transform.run`, export
+> `cart-delivery-options-transform-run`, `@shopify/shopify_function` v2, and an **empty**
+> `[extensions.build].command = ""` so the CLI's native esbuild→Javy pipeline builds it (no more
+> recursive `npm run build` deadlock). `npm run build` produces `dist/function.wasm`; `npm test`
+> runs 3 vitest integration tests that build the wasm and validate I/O against the schema.
+>
+> The old parked copy (`_disabled_extensions/wholesale-shipping/`, old `delivery_customization`
+> type with the recursive build) has been **deleted** — superseded by this one.
 
-`extensions/wholesale-shipping/` — hides all shipping options that cost > $0 for approved
+`extensions/wholesale-free-shipping/` — hides all shipping options that cost > $0 for approved
 wholesale customers with a US shipping address. Non-wholesale buyers and non-US addresses
-see normal shipping rates unaffected.
+see normal shipping rates unaffected. Logic in `src/cart_delivery_options_transform_run.ts`;
+input query in the sibling `.graphql`. US is checked per delivery group via
+`deliveryAddress.countryCode === CountryCode.Us`.
 
 **Customer detection**: reads the same `wholesale.status` customer metafield as the checkout
 extension. Metafield is written on every approve/suspend/reject in `app.customers.tsx` and
@@ -167,10 +171,10 @@ silently if the function isn't deployed yet (safe to call on every re-auth).
 1. In Shopify Admin → Settings → Shipping and delivery → Manage rates: add a **$0 shipping
    rate** named "Wholesale Free Shipping" for the US zone. Without this rate, the function
    will hide ALL shipping options and the checkout will stall with no rates available.
-2. Set up a working JS→WASM build first (see the DISABLED note above) — the build does **not**
-   work as-is and is NOT handled automatically by `shopify app dev` (it deadlocks). Once a
-   non-recursive build command produces `dist/function.wasm`, move the extension back into
-   `extensions/`.
+2. Deploy the function so it exists in the store: `shopify app deploy` (or it builds + uploads
+   during `shopify app dev`). On the next OAuth, `afterAuth` → `enableWholesaleShippingFunction`
+   finds it by handle `wholesale-free-shipping` and creates the delivery customization record.
+   (Build no longer needs any manual step — `dist/function.wasm` is produced natively by the CLI.)
 
 **Scope of "free"**: US only. International wholesale orders see normal rates. If CW&T wants
 free international wholesale shipping in the future, change the `isUS` check in `src/run.ts`.
