@@ -17,15 +17,20 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
+import { enrollCustomer, resolveDiscountPercent } from "../lib/enrollment.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
 
-  const distributors = await db.wholesaleCustomer.findMany({
+  const rows = await db.wholesaleCustomer.findMany({
     where: { customerType: "DISTRIBUTOR" },
     orderBy: { createdAt: "desc" },
     take: 100,
+    include: { pricingProfile: true },
   });
+
+  // Resolve the effective rate (override ?? profile) for display.
+  const distributors = rows.map((d) => ({ ...d, discountPercent: resolveDiscountPercent(d) }));
 
   return json({ distributors });
 };
@@ -54,85 +59,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ error: "Email and company are required." }, { status: 400 });
     }
 
-    // Find or create the Shopify customer
-    const findRes = await admin.graphql(`
-      query FindCustomerByEmail($email: String!) {
-        customers(first: 1, query: $email) {
-          edges { node { id legacyResourceId tags } }
-        }
-      }
-    `, { variables: { email: `email:${email}` } });
-    const findData = await findRes.json();
-    const existing = findData.data?.customers?.edges?.[0]?.node;
-
-    let shopifyCustomerId: string;
-
-    const metafields = [
-      { namespace: "wholesale", key: "status", value: "approved", type: "single_line_text_field" },
-      ...(minimumOrderValue !== null
-        ? [{ namespace: "wholesale", key: "minimum_order_value", value: String(minimumOrderValue), type: "single_line_text_field" }]
-        : []),
-    ];
-
-    if (existing) {
-      shopifyCustomerId = existing.legacyResourceId;
-      const existingTags: string[] = existing.tags ?? [];
-      const newTags = [...existingTags];
-      if (!newTags.includes("wholesale")) newTags.push("wholesale");
-      if (!newTags.includes("distributor")) newTags.push("distributor");
-
-      await admin.graphql(`
-        mutation UpdateDistributorCustomer($input: CustomerInput!) {
-          customerUpdate(input: $input) {
-            customer { id }
-            userErrors { field message }
-          }
-        }
-      `, { variables: { input: { id: existing.id, tags: newTags, metafields } } });
-    } else {
-      const createRes = await admin.graphql(`
-        mutation CreateDistributorCustomer($input: CustomerInput!) {
-          customerCreate(input: $input) {
-            customer { id legacyResourceId }
-            userErrors { field message }
-          }
-        }
-      `, {
-        variables: {
-          input: { email, tags: ["wholesale", "distributor"], metafields },
-        },
-      });
-      const createData = await createRes.json();
-      shopifyCustomerId = createData.data?.customerCreate?.customer?.legacyResourceId ?? "";
-    }
-
-    if (!shopifyCustomerId) {
-      return json({ error: "Could not find or create Shopify customer." }, { status: 500 });
-    }
-
-    await db.wholesaleCustomer.upsert({
-      where: { shopifyCustomerId },
-      create: {
-        shopifyCustomerId,
+    try {
+      // The admin typed an explicit rate, so it's stored as a per-customer
+      // override even when it matches the profile default.
+      await enrollCustomer(admin, {
         email,
         company,
-        status: "APPROVED",
         customerType: "DISTRIBUTOR",
         discountPercent,
         paymentTerms,
         minimumOrderValue,
-        approvedAt: new Date(),
-      },
-      update: {
-        company,
-        status: "APPROVED",
-        customerType: "DISTRIBUTOR",
-        discountPercent,
-        paymentTerms,
-        minimumOrderValue,
-        approvedAt: new Date(),
-      },
-    });
+      });
+    } catch (err) {
+      console.error("[distributors] enroll failed:", err);
+      return json({ error: "Could not find or create Shopify customer." }, { status: 500 });
+    }
 
     return json({ ok: true });
   }

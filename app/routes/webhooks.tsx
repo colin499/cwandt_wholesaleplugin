@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
+import { defaultProfileIdForType, resolveDiscountPercent } from "../lib/enrollment.server";
 
 // All Shopify webhook payloads arrive here.
 // The authenticate.webhook() call verifies the HMAC signature automatically.
@@ -75,7 +76,10 @@ async function handleOrderWebhook(payload: Record<string, unknown>) {
   const shopifyCustomerId = String(customer.id ?? "");
 
   const wholesaleCustomer = shopifyCustomerId
-    ? await db.wholesaleCustomer.findUnique({ where: { shopifyCustomerId } })
+    ? await db.wholesaleCustomer.findUnique({
+        where: { shopifyCustomerId },
+        include: { pricingProfile: true },
+      })
     : null;
 
   if (!wholesaleCustomer) return;
@@ -91,7 +95,7 @@ async function handleOrderWebhook(payload: Record<string, unknown>) {
       paymentTerms: paymentTerms as any,
       totalAmount: Math.round(Number(payload.total_price ?? 0) * 100),
       currency: payload.currency ? String(payload.currency) : null,
-      discountPercent: wholesaleCustomer.discountPercent,
+      discountPercent: resolveDiscountPercent(wholesaleCustomer),
       isBackorder,
       orderTags: JSON.stringify(tags),
       status: "CONFIRMED",
@@ -147,9 +151,8 @@ async function handleCustomerWebhook(payload: Record<string, unknown>) {
   if (!isWholesale && !isDistributor) return;
 
   // customerType is DISTRIBUTOR if the customer has the distributor tag.
-  // Default discount is 50% for wholesale, 50% for distributor.
+  // Rate comes from the pricing profile (no per-customer override on auto-enroll).
   const customerType = isDistributor ? "DISTRIBUTOR" : "WHOLESALE";
-  const defaultDiscount = isDistributor ? 50 : 50;
 
   await db.wholesaleCustomer.upsert({
     where: { shopifyCustomerId },
@@ -160,7 +163,8 @@ async function handleCustomerWebhook(payload: Record<string, unknown>) {
       lastName: String((payload.last_name as string) ?? ""),
       status: "APPROVED",
       customerType,
-      discountPercent: defaultDiscount,
+      pricingProfileId: defaultProfileIdForType(customerType),
+      discountPercent: null,
       paymentTerms: "CREDIT_CARD",
       approvedAt: new Date(),
     },

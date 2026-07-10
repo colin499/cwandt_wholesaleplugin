@@ -34,11 +34,35 @@ model Session {
 }
 
 // ---------------------------------------------------------------------------
+// Pricing profiles — named rate templates customers point at.
+// Adding a new segment (e.g. B2B) is a new row here, not a code change.
+// Fixed ids ("pp_wholesale", "pp_distributor", "pp_b2b") are seeded in the
+// add_pricing_profiles migration so code and other environments can reference
+// them stably.
+// paymentTerms: "CREDIT_CARD" | "NET_30" | "NET_60" — default applied at enrollment
+// minimumOrderValue: profile-level minimum in USD; null = use global OrderMinimumConfig
+// ---------------------------------------------------------------------------
+model PricingProfile {
+  id                String   @id @default(cuid())
+  name              String   @unique
+  discountPercent   Float
+  paymentTerms      String   @default("CREDIT_CARD")
+  minimumOrderValue Float?
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  customers WholesaleCustomer[]
+}
+
+// ---------------------------------------------------------------------------
 // Wholesale customer accounts
 // status: "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED"
-// customerType: "WHOLESALE" | "DISTRIBUTOR"
+// customerType: segmentation only ("WHOLESALE" | "DISTRIBUTOR" | "B2B") —
+//   pricing comes from pricingProfile, not from the type
 // paymentTerms: "CREDIT_CARD" | "NET_30" | "NET_60"
-// minimumOrderValue: per-customer override in USD; null = use global OrderMinimumConfig
+// discountPercent: per-customer override; null = use pricingProfile rate
+// minimumOrderValue: per-customer override in USD; null = profile, then global
 // ---------------------------------------------------------------------------
 model WholesaleCustomer {
   id                String   @id @default(cuid())
@@ -50,7 +74,9 @@ model WholesaleCustomer {
   phone             String?
   status            String   @default("PENDING")
   customerType      String   @default("WHOLESALE")
-  discountPercent   Float    @default(50)
+  pricingProfileId  String?
+  pricingProfile    PricingProfile? @relation(fields: [pricingProfileId], references: [id])
+  discountPercent   Float?
   paymentTerms      String   @default("CREDIT_CARD")
   minimumOrderValue Float?
   approvedAt        DateTime?

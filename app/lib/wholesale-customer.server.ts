@@ -9,15 +9,16 @@
  */
 
 import { db } from "../db.server";
+import { resolveDiscountPercent } from "./enrollment.server";
 
 export type WholesaleSession = {
   shopifyCustomerId: string;
-  discountPercent: number;
+  discountPercent: number;       // resolved: customer override ?? pricing profile ?? 50
   paymentTerms: string;
   company: string | null;
   status: string;
-  customerType: string;          // "WHOLESALE" | "DISTRIBUTOR"
-  minimumOrderValue: number | null; // per-customer override; null = use global
+  customerType: string;          // "WHOLESALE" | "DISTRIBUTOR" | "B2B"
+  minimumOrderValue: number | null; // resolved override (customer ?? profile); null = use global
 };
 
 /**
@@ -42,12 +43,24 @@ export async function getWholesaleSession(
       status: true,
       customerType: true,
       minimumOrderValue: true,
+      pricingProfile: {
+        select: { discountPercent: true, minimumOrderValue: true },
+      },
     },
   });
 
   if (!customer || customer.status !== "APPROVED") return null;
 
-  return customer;
+  return {
+    shopifyCustomerId: customer.shopifyCustomerId,
+    discountPercent: resolveDiscountPercent(customer),
+    paymentTerms: customer.paymentTerms,
+    company: customer.company,
+    status: customer.status,
+    customerType: customer.customerType,
+    minimumOrderValue:
+      customer.minimumOrderValue ?? customer.pricingProfile?.minimumOrderValue ?? null,
+  };
 }
 
 /**
@@ -135,10 +148,18 @@ export async function getEffectiveOrderMinimum(
   if (shopifyCustomerId) {
     const customer = await db.wholesaleCustomer.findUnique({
       where: { shopifyCustomerId },
-      select: { minimumOrderValue: true, status: true },
+      select: {
+        minimumOrderValue: true,
+        status: true,
+        pricingProfile: { select: { minimumOrderValue: true } },
+      },
     });
-    if (customer?.status === "APPROVED" && customer.minimumOrderValue !== null) {
-      return { minimumOrderValue: customer.minimumOrderValue, minimumOrderQuantity: null };
+    if (customer?.status === "APPROVED") {
+      const override =
+        customer.minimumOrderValue ?? customer.pricingProfile?.minimumOrderValue ?? null;
+      if (override !== null) {
+        return { minimumOrderValue: override, minimumOrderQuantity: null };
+      }
     }
   }
   const config = await getOrderMinimumConfig();

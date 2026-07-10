@@ -15,6 +15,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
+import { enrollCustomer } from "../lib/enrollment.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
@@ -42,95 +43,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (intent === "approve") {
-    // 1. Find or create Shopify customer
-    const customerResponse = await admin.graphql(`
-      query findCustomer($email: String!) {
-        customers(first: 1, query: $email) {
-          edges { node { id legacyResourceId tags } }
-        }
-      }
-    `, { variables: { email: `email:${application.email}` } });
-
-    const customerData = await customerResponse.json();
-    const existingCustomer = customerData.data?.customers?.edges?.[0]?.node;
-
-    let shopifyCustomerId: string;
-
-    // Metafield written on approve so the checkout extension can read wholesale status
-    // without a network call. namespace/key must match shopify.extension.toml.
-    const wholesaleStatusMetafield = {
-      namespace: "wholesale",
-      key: "status",
-      value: "approved",
-      type: "single_line_text_field",
-    };
-
-    if (existingCustomer) {
-      shopifyCustomerId = existingCustomer.legacyResourceId;
-      await admin.graphql(`
-        mutation customerUpdate($input: CustomerInput!) {
-          customerUpdate(input: $input) {
-            customer { id tags }
-            userErrors { field message }
-          }
-        }
-      `, {
-        variables: {
-          input: {
-            id: existingCustomer.id,
-            tags: [...(existingCustomer.tags || []), "wholesale"],
-            metafields: [wholesaleStatusMetafield],
-          },
-        },
-      });
-    } else {
-      // Create new Shopify customer with wholesale tag
-      const createResponse = await admin.graphql(`
-        mutation customerCreate($input: CustomerInput!) {
-          customerCreate(input: $input) {
-            customer { id legacyResourceId }
-            userErrors { field message }
-          }
-        }
-      `, {
-        variables: {
-          input: {
-            email: application.email,
-            firstName: application.firstName,
-            lastName: application.lastName,
-            tags: ["wholesale"],
-            metafields: [wholesaleStatusMetafield],
-          },
-        },
-      });
-
-      const createData = await createResponse.json();
-      shopifyCustomerId =
-        createData.data?.customerCreate?.customer?.legacyResourceId ?? "";
-    }
-
-    // 2. Create WholesaleCustomer record
-    await db.wholesaleCustomer.upsert({
-      where: { shopifyCustomerId },
-      create: {
-        shopifyCustomerId,
-        email: application.email,
-        firstName: application.firstName,
-        lastName: application.lastName,
-        company: application.company,
-        phone: application.phone ?? undefined,
-        status: "APPROVED",
-        discountPercent: 50,
-        paymentTerms: "CREDIT_CARD",
-        approvedAt: new Date(),
-      },
-      update: {
-        status: "APPROVED",
-        approvedAt: new Date(),
-      },
+    // Single enrollment path: creates/finds the Shopify customer, upserts the
+    // local row as APPROVED, and syncs the tag + metafield projections.
+    const customer = await enrollCustomer(admin, {
+      email: application.email,
+      firstName: application.firstName,
+      lastName: application.lastName,
+      company: application.company,
+      phone: application.phone ?? undefined,
+      customerType: "WHOLESALE",
     });
+    const shopifyCustomerId = customer.shopifyCustomerId;
 
-    // 3. Mark application approved
+    // Mark application approved
     await db.wholesaleApplication.update({
       where: { id: applicationId },
       data: {

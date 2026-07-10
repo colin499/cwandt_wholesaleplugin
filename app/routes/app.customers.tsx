@@ -15,15 +15,20 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
+import { resolveDiscountPercent } from "../lib/enrollment.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
 
-  const customers = await db.wholesaleCustomer.findMany({
+  const rows = await db.wholesaleCustomer.findMany({
     where: { customerType: "WHOLESALE" },
     orderBy: { createdAt: "desc" },
     take: 100,
+    include: { pricingProfile: true },
   });
+
+  // Resolve the effective rate (override ?? profile) for display.
+  const customers = rows.map((c) => ({ ...c, discountPercent: resolveDiscountPercent(c) }));
 
   return json({ customers });
 };

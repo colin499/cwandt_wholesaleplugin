@@ -1,0 +1,334 @@
+/**
+ * Customer enrollment + Shopify projection sync.
+ *
+ * The local WholesaleCustomer row is the single source of truth for account
+ * state. Shopify carries two WRITE-ONLY projections of it, each existing
+ * because of a platform constraint:
+ *
+ *   - customer tags (`wholesale`, plus `distributor` / `b2b` by type) — the
+ *     only signal Liquid can read cheaply (wholesale-badge / wholesale-price
+ *     blocks gate on `customer.tags contains 'wholesale'`)
+ *   - the `wholesale.status` customer metafield — the only signal Shopify
+ *     Functions can read (free-shipping delivery customization)
+ *
+ * Both are written exclusively by syncCustomerToShopify(). Nothing in the app
+ * reads them back as authority; inbound customer webhooks reconcile
+ * name/email only (see webhooks.tsx).
+ */
+
+import { db } from "../db.server";
+
+// Fixed ids seeded by the add_pricing_profiles migration.
+export const PRICING_PROFILE_IDS = {
+  WHOLESALE: "pp_wholesale",
+  DISTRIBUTOR: "pp_distributor",
+  B2B: "pp_b2b",
+} as const;
+
+export function defaultProfileIdForType(customerType: string): string {
+  switch (customerType) {
+    case "DISTRIBUTOR":
+      return PRICING_PROFILE_IDS.DISTRIBUTOR;
+    case "B2B":
+      return PRICING_PROFILE_IDS.B2B;
+    default:
+      return PRICING_PROFILE_IDS.WHOLESALE;
+  }
+}
+
+/** Tags this app manages on Shopify customers. Never touch any other tag. */
+const MANAGED_TAGS = ["wholesale", "distributor", "b2b"] as const;
+
+function typeTag(customerType: string): string | null {
+  if (customerType === "DISTRIBUTOR") return "distributor";
+  if (customerType === "B2B") return "b2b";
+  return null;
+}
+
+/**
+ * Effective discount: per-customer override, else profile rate, else 50.
+ */
+export function resolveDiscountPercent(customer: {
+  discountPercent: number | null;
+  pricingProfile?: { discountPercent: number } | null;
+}): number {
+  return customer.discountPercent ?? customer.pricingProfile?.discountPercent ?? 50;
+}
+
+/** Minimal shape of the Admin GraphQL client from authenticate.admin(). */
+type AdminClient = {
+  graphql: (
+    query: string,
+    options?: { variables?: Record<string, unknown> }
+  ) => Promise<{ json: () => Promise<any> }>;
+};
+
+/**
+ * Pushes the customer's current DB state out to Shopify: managed tags and the
+ * wholesale.status / wholesale.minimum_order_value metafields. Call after
+ * every mutation of a WholesaleCustomer row. Idempotent.
+ */
+export async function syncCustomerToShopify(
+  admin: AdminClient,
+  shopifyCustomerId: string
+): Promise<void> {
+  const customer = await db.wholesaleCustomer.findUnique({
+    where: { shopifyCustomerId },
+    include: { pricingProfile: true },
+  });
+  if (!customer) throw new Error(`No WholesaleCustomer for id ${shopifyCustomerId}`);
+
+  const gid = `gid://shopify/Customer/${shopifyCustomerId}`;
+  const approved = customer.status === "APPROVED";
+
+  // Desired managed-tag set from DB state. Everything managed but not desired
+  // is removed, so type changes and suspensions propagate.
+  const desired = approved
+    ? ["wholesale", typeTag(customer.customerType)].filter(Boolean) as string[]
+    : [];
+  const toRemove = MANAGED_TAGS.filter((t) => !desired.includes(t));
+
+  const metafields: Array<Record<string, string>> = [
+    {
+      ownerId: gid,
+      namespace: "wholesale",
+      key: "status",
+      value: approved ? "approved" : "inactive",
+      type: "single_line_text_field",
+    },
+  ];
+
+  // Per-customer override wins; profile minimum is the fallback. The global
+  // OrderMinimumConfig fallback lives server-side (getEffectiveOrderMinimum),
+  // so it is deliberately NOT projected onto the customer.
+  const effectiveMinimum =
+    customer.minimumOrderValue ?? customer.pricingProfile?.minimumOrderValue ?? null;
+  if (effectiveMinimum !== null) {
+    metafields.push({
+      ownerId: gid,
+      namespace: "wholesale",
+      key: "minimum_order_value",
+      value: String(effectiveMinimum),
+      type: "single_line_text_field",
+    });
+  }
+
+  const ops: Promise<unknown>[] = [];
+
+  if (desired.length > 0) {
+    ops.push(
+      admin.graphql(
+        `mutation AddManagedTags($id: ID!, $tags: [String!]!) {
+          tagsAdd(id: $id, tags: $tags) {
+            node { id }
+            userErrors { field message }
+          }
+        }`,
+        { variables: { id: gid, tags: desired } }
+      )
+    );
+  }
+  ops.push(
+    admin.graphql(
+      `mutation RemoveManagedTags($id: ID!, $tags: [String!]!) {
+        tagsRemove(id: $id, tags: $tags) {
+          node { id }
+          userErrors { field message }
+        }
+      }`,
+      { variables: { id: gid, tags: toRemove } }
+    )
+  );
+  ops.push(
+    admin.graphql(
+      `mutation SetWholesaleMetafields($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) {
+          metafields { id }
+          userErrors { field message }
+        }
+      }`,
+      { variables: { metafields } }
+    )
+  );
+
+  await Promise.all(ops);
+
+  // No effective minimum → make sure a stale metafield isn't left behind.
+  if (effectiveMinimum === null) {
+    const mfRes = await admin.graphql(
+      `query GetMinimumMetafield($id: ID!) {
+        customer(id: $id) {
+          metafield(namespace: "wholesale", key: "minimum_order_value") { id }
+        }
+      }`,
+      { variables: { id: gid } }
+    );
+    const mfData = await mfRes.json();
+    const metafieldId = mfData.data?.customer?.metafield?.id;
+    if (metafieldId) {
+      await admin.graphql(
+        `mutation DeleteMinimumMetafield($input: [ID!]!) {
+          metafieldsDelete(metafields: $input) {
+            userErrors { field message }
+          }
+        }`,
+        { variables: { input: [metafieldId] } }
+      );
+    }
+  }
+}
+
+export type EnrollInput = {
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  company?: string;
+  phone?: string;
+  /** "WHOLESALE" | "DISTRIBUTOR" | "B2B" — defaults to WHOLESALE */
+  customerType?: string;
+  /** Defaults to the profile matching customerType */
+  pricingProfileId?: string;
+  /** Per-customer rate override; omit/null to use the profile rate */
+  discountPercent?: number | null;
+  /** Defaults to the profile's paymentTerms */
+  paymentTerms?: string;
+  minimumOrderValue?: number | null;
+  approvedBy?: string;
+};
+
+/**
+ * The single enrollment path: finds or creates the Shopify customer record,
+ * upserts the local row as APPROVED, and syncs projections. Used by both the
+ * admin "add customer" flow and application approval.
+ *
+ * Creating a Shopify customer record does NOT create a storefront login —
+ * with new customer accounts the customer just signs in by email OTP, so
+ * there is no password or invite to manage.
+ */
+export async function enrollCustomer(admin: AdminClient, input: EnrollInput) {
+  const email = input.email.trim().toLowerCase();
+  const customerType = input.customerType ?? "WHOLESALE";
+  const pricingProfileId = input.pricingProfileId ?? defaultProfileIdForType(customerType);
+
+  const profile = await db.pricingProfile.findUnique({ where: { id: pricingProfileId } });
+  if (!profile) throw new Error(`Unknown pricing profile: ${pricingProfileId}`);
+
+  // Already enrolled? Reuse the known Shopify id rather than relying on
+  // Shopify's customer search, whose index is eventually consistent (a
+  // just-created customer can be missed, causing a duplicate-create error).
+  const known = await db.wholesaleCustomer.findFirst({
+    where: { email },
+    select: { shopifyCustomerId: true },
+  });
+  if (known) {
+    return finishEnrollment(admin, known.shopifyCustomerId, input, {
+      email,
+      customerType,
+      pricingProfileId,
+      profilePaymentTerms: profile.paymentTerms,
+    });
+  }
+
+  // Find-or-create the Shopify customer record.
+  const findRes = await admin.graphql(
+    `query FindCustomerByEmail($query: String!) {
+      customers(first: 1, query: $query) {
+        edges { node { id legacyResourceId } }
+      }
+    }`,
+    { variables: { query: `email:${email}` } }
+  );
+  const findData = await findRes.json();
+  const existing = findData.data?.customers?.edges?.[0]?.node;
+
+  let shopifyCustomerId: string;
+  if (existing) {
+    shopifyCustomerId = existing.legacyResourceId;
+  } else {
+    const createRes = await admin.graphql(
+      `mutation CreateCustomer($input: CustomerInput!) {
+        customerCreate(input: $input) {
+          customer { id legacyResourceId }
+          userErrors { field message }
+        }
+      }`,
+      {
+        variables: {
+          input: {
+            email,
+            firstName: input.firstName || undefined,
+            lastName: input.lastName || undefined,
+            phone: input.phone || undefined,
+          },
+        },
+      }
+    );
+    const createData = await createRes.json();
+    const errors = createData.data?.customerCreate?.userErrors ?? [];
+    shopifyCustomerId = createData.data?.customerCreate?.customer?.legacyResourceId ?? "";
+    if (!shopifyCustomerId) {
+      throw new Error(
+        `customerCreate failed: ${errors.map((e: any) => e.message).join("; ") || "unknown error"}`
+      );
+    }
+  }
+
+  return finishEnrollment(admin, shopifyCustomerId, input, {
+    email,
+    customerType,
+    pricingProfileId,
+    profilePaymentTerms: profile.paymentTerms,
+  });
+}
+
+async function finishEnrollment(
+  admin: AdminClient,
+  shopifyCustomerId: string,
+  input: EnrollInput,
+  resolved: {
+    email: string;
+    customerType: string;
+    pricingProfileId: string;
+    profilePaymentTerms: string;
+  }
+) {
+  const { email, customerType, pricingProfileId, profilePaymentTerms } = resolved;
+
+  const customer = await db.wholesaleCustomer.upsert({
+    where: { shopifyCustomerId },
+    create: {
+      shopifyCustomerId,
+      email,
+      firstName: input.firstName ?? null,
+      lastName: input.lastName ?? null,
+      company: input.company ?? null,
+      phone: input.phone ?? null,
+      status: "APPROVED",
+      customerType,
+      pricingProfileId,
+      discountPercent: input.discountPercent ?? null,
+      paymentTerms: input.paymentTerms ?? profilePaymentTerms,
+      minimumOrderValue: input.minimumOrderValue ?? null,
+      approvedAt: new Date(),
+      approvedBy: input.approvedBy ?? null,
+    },
+    update: {
+      email,
+      firstName: input.firstName ?? undefined,
+      lastName: input.lastName ?? undefined,
+      company: input.company ?? undefined,
+      phone: input.phone ?? undefined,
+      status: "APPROVED",
+      customerType,
+      pricingProfileId,
+      discountPercent: input.discountPercent ?? null,
+      paymentTerms: input.paymentTerms ?? profilePaymentTerms,
+      minimumOrderValue: input.minimumOrderValue ?? undefined,
+      approvedAt: new Date(),
+      approvedBy: input.approvedBy ?? undefined,
+    },
+  });
+
+  await syncCustomerToShopify(admin, shopifyCustomerId);
+  return customer;
+}
