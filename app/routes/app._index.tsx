@@ -25,7 +25,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     openBackorders,
     syncState,
   ] = await Promise.all([
-    db.wholesaleCustomer.count({ where: { status: "APPROVED", customerType: "WHOLESALE" } }),
+    // All approved accounts regardless of type (wholesale/distributor/b2b)
+    db.wholesaleCustomer.count({ where: { status: "APPROVED" } }),
     db.wholesaleCustomer.count({ where: { status: "APPROVED", customerType: "DISTRIBUTOR" } }),
     db.wholesaleApplication.count({ where: { status: "PENDING" } }),
     db.wholesaleOrder.count({ where: { isBackorder: true, status: { in: ["PENDING", "CONFIRMED"] } } }),
@@ -58,7 +59,7 @@ export default function Index() {
         <InlineGrid columns={4} gap="400">
           <Card>
             <BlockStack gap="200">
-              <Text as="h3" variant="headingSm" tone="subdued">Wholesale Accounts</Text>
+              <Text as="h3" variant="headingSm" tone="subdued">Approved Customers</Text>
               <Text as="p" variant="heading2xl">{stats.wholesaleCount}</Text>
             </BlockStack>
           </Card>

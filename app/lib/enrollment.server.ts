@@ -178,6 +178,75 @@ export async function syncCustomerToShopify(
   }
 }
 
+/**
+ * Handles CUSTOMERS_CREATE / CUSTOMERS_UPDATE webhooks. RECONCILES — never
+ * enrolls. A customer tagged `wholesale` by hand in Shopify Admin is
+ * deliberately ignored: the old behavior of silently creating an APPROVED
+ * account at the default discount bypassed the review flow entirely.
+ *
+ * For customers the app does know, this:
+ *   1. keeps identity fields (email/name) in sync, and
+ *   2. corrects tag drift in whichever direction it occurred:
+ *      - tag removed from an APPROVED account → honored as offboarding:
+ *        suspend and re-sync projections (clears remaining managed tags,
+ *        sets wholesale.status=inactive) so removing the tag actually
+ *        revokes pricing everywhere, instead of the App Proxy and shipping
+ *        function silently continuing to grant it.
+ *      - managed tag hand-added to a non-APPROVED account → strip it via
+ *        sync; tags are projections of DB state, not inputs.
+ *
+ * Loop safety: syncCustomerToShopify triggers another CUSTOMERS_UPDATE, but
+ * after a sync the tags match DB state, so the re-entrant call finds no
+ * drift and only touches identity fields.
+ */
+export async function reconcileCustomerFromWebhook(
+  payload: Record<string, unknown>,
+  admin: AdminClient | undefined
+): Promise<void> {
+  const shopifyCustomerId = String(payload.id ?? "");
+  if (!shopifyCustomerId) return;
+
+  const customer = await db.wholesaleCustomer.findUnique({
+    where: { shopifyCustomerId },
+  });
+  if (!customer) return; // unknown customer — enrollment only happens in the app
+
+  await db.wholesaleCustomer.update({
+    where: { shopifyCustomerId },
+    data: {
+      email: String((payload.email as string) ?? "") || customer.email,
+      firstName: String((payload.first_name as string) ?? "") || customer.firstName,
+      lastName: String((payload.last_name as string) ?? "") || customer.lastName,
+    },
+  });
+
+  const tags = String(payload.tags ?? "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const hasWholesaleTag = tags.includes("wholesale");
+  const hasManagedTag = MANAGED_TAGS.some((t) => tags.includes(t));
+
+  if (customer.status === "APPROVED" && !hasWholesaleTag) {
+    const stamp = new Date().toISOString().slice(0, 10);
+    await db.wholesaleCustomer.update({
+      where: { shopifyCustomerId },
+      data: {
+        status: "SUSPENDED",
+        notes: [
+          customer.notes,
+          `Auto-suspended ${stamp}: wholesale tag removed in Shopify Admin.`,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      },
+    });
+    if (admin) await syncCustomerToShopify(admin, shopifyCustomerId);
+  } else if (customer.status !== "APPROVED" && hasManagedTag) {
+    if (admin) await syncCustomerToShopify(admin, shopifyCustomerId);
+  }
+}
+
 export type EnrollInput = {
   email: string;
   firstName?: string;

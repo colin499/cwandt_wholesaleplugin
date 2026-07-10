@@ -37,6 +37,18 @@ const CreateRuleSchema = z.object({
     .nullable(),
 });
 
+const UpdateProfileSchema = z.object({
+  discountPercent: z.coerce
+    .number()
+    .gt(0, "Discount must be greater than 0")
+    .max(100, "Discount cannot exceed 100%"),
+  paymentTerms: z.enum(["CREDIT_CARD", "NET_30", "NET_60"]),
+  minimumOrderValue: z.coerce
+    .number()
+    .min(0, "Minimum order value cannot be negative")
+    .nullable(),
+});
+
 const UpdateMinimumsSchema = z.object({
   minimumOrderValue: z.coerce
     .number()
@@ -53,13 +65,22 @@ const UpdateMinimumsSchema = z.object({
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
 
-  const [rules, minimumConfig, settings] = await Promise.all([
+  const [rules, minimumConfig, settings, profiles] = await Promise.all([
     db.pricingRule.findMany({ orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] }),
     db.orderMinimumConfig.findFirst({ where: { active: true } }),
     db.wholesaleSettings.findFirst(),
+    db.pricingProfile.findMany({
+      orderBy: { name: "asc" },
+      include: { _count: { select: { customers: true } } },
+    }),
   ]);
 
-  return json({ rules, minimumConfig, maxDiscountPercent: settings?.maxDiscountPercent ?? 70 });
+  return json({
+    rules,
+    minimumConfig,
+    maxDiscountPercent: settings?.maxDiscountPercent ?? 70,
+    profiles,
+  });
 };
 
 // ── Action ───────────────────────────────────────────────────────────────────
@@ -105,6 +126,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await db.pricingRule.delete({
       where: { id: String(formData.get("ruleId")) },
     });
+    return json({ ok: true });
+  }
+
+  if (intent === "update-profile") {
+    const profileId = String(formData.get("profileId"));
+    const raw = {
+      discountPercent: formData.get("discountPercent"),
+      paymentTerms: String(formData.get("paymentTerms") ?? ""),
+      minimumOrderValue: formData.get("minimumOrderValue") || null,
+    };
+
+    const result = UpdateProfileSchema.safeParse(raw);
+    if (!result.success) {
+      return json({ errors: result.error.flatten().fieldErrors }, { status: 422 });
+    }
+
+    await db.pricingProfile.update({ where: { id: profileId }, data: result.data });
     return json({ ok: true });
   }
 
@@ -170,8 +208,80 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
+function ProfileRow({
+  profile,
+}: {
+  profile: {
+    id: string;
+    name: string;
+    discountPercent: number;
+    paymentTerms: string;
+    minimumOrderValue: number | null;
+    _count: { customers: number };
+  };
+}) {
+  const fetcher = useFetcher();
+  const [discount, setDiscount] = useState(String(profile.discountPercent));
+  const [terms, setTerms] = useState(profile.paymentTerms);
+  const [minVal, setMinVal] = useState(
+    profile.minimumOrderValue != null ? String(profile.minimumOrderValue) : ""
+  );
+
+  return (
+    <fetcher.Form method="post">
+      <input type="hidden" name="intent" value="update-profile" />
+      <input type="hidden" name="profileId" value={profile.id} />
+      <InlineStack gap="300" blockAlign="end" wrap>
+        <div style={{ minWidth: 140 }}>
+          <BlockStack gap="100">
+            <Text as="span" fontWeight="semibold">{profile.name}</Text>
+            <Text as="span" tone="subdued" variant="bodySm">
+              {profile._count.customers} customer{profile._count.customers === 1 ? "" : "s"}
+            </Text>
+          </BlockStack>
+        </div>
+        <div style={{ width: 120 }}>
+          <TextField
+            label="Discount"
+            autoComplete="off"
+            name="discountPercent"
+            suffix="%"
+            value={discount}
+            onChange={setDiscount}
+          />
+        </div>
+        <div style={{ width: 150 }}>
+          <Select
+            label="Default terms"
+            name="paymentTerms"
+            options={[
+              { label: "Credit Card", value: "CREDIT_CARD" },
+              { label: "Net 30", value: "NET_30" },
+              { label: "Net 60", value: "NET_60" },
+            ]}
+            value={terms}
+            onChange={setTerms}
+          />
+        </div>
+        <div style={{ width: 140 }}>
+          <TextField
+            label="Min. order"
+            autoComplete="off"
+            name="minimumOrderValue"
+            prefix="$"
+            placeholder="Global default"
+            value={minVal}
+            onChange={setMinVal}
+          />
+        </div>
+        <Button submit loading={fetcher.state !== "idle"}>Save</Button>
+      </InlineStack>
+    </fetcher.Form>
+  );
+}
+
 export default function PricingPage() {
-  const { rules, minimumConfig, maxDiscountPercent } = useLoaderData<typeof loader>();
+  const { rules, minimumConfig, maxDiscountPercent, profiles } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
 
   const [minOrderValue, setMinOrderValue] = useState(
@@ -203,6 +313,23 @@ export default function PricingPage() {
             </Text>
           </Banner>
         )}
+
+        {/* Pricing profiles — the per-segment rates customers point at */}
+        <Card>
+          <BlockStack gap="400">
+            <BlockStack gap="100">
+              <Text as="h2" variant="headingMd">Pricing Profiles</Text>
+              <Text as="p" tone="subdued">
+                Each customer type&apos;s rate. Changing a profile immediately changes
+                pricing for every customer on it (unless they have a per-customer
+                override, set when adding the customer). New segments are new rows here.
+              </Text>
+            </BlockStack>
+            {profiles.map((p) => (
+              <ProfileRow key={p.id} profile={p} />
+            ))}
+          </BlockStack>
+        </Card>
 
         {/* Active rules summary */}
         <Card>

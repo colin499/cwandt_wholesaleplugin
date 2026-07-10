@@ -18,8 +18,7 @@ export default function App() {
     <AppProvider isEmbeddedApp apiKey={apiKey} i18n={polarisTranslations}>
       <NavMenu>
         <a href="/app" rel="home">Dashboard</a>
-        <a href="/app/customers">Wholesale Customers</a>
-        <a href="/app/distributors">Distributors</a>
+        <a href="/app/customers">Customers</a>
         <a href="/app/applications">Applications</a>
         <a href="/app/pricing">Pricing Rules</a>
         <a href="/app/backorders">Backorders</a>

@@ -1,12 +1,12 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
-import { defaultProfileIdForType, resolveDiscountPercent } from "../lib/enrollment.server";
+import { resolveDiscountPercent, reconcileCustomerFromWebhook } from "../lib/enrollment.server";
 
 // All Shopify webhook payloads arrive here.
 // The authenticate.webhook() call verifies the HMAC signature automatically.
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { topic, shop, session, payload } =
+  const { topic, shop, session, admin, payload } =
     await authenticate.webhook(request);
 
   switch (topic) {
@@ -41,7 +41,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     case "CUSTOMERS_CREATE":
     case "CUSTOMERS_UPDATE":
-      await handleCustomerWebhook(payload as Record<string, unknown>);
+      // Reconcile-only: syncs identity fields and corrects tag drift for
+      // known customers. Never enrolls — see reconcileCustomerFromWebhook.
+      await reconcileCustomerFromWebhook(payload as Record<string, unknown>, admin);
       break;
 
     default:
@@ -139,41 +141,3 @@ async function handleInventoryWebhook(payload: Record<string, unknown>) {
   });
 }
 
-async function handleCustomerWebhook(payload: Record<string, unknown>) {
-  const tags = String(payload.tags ?? "")
-    .split(",")
-    .map((t) => t.trim())
-    .filter(Boolean);
-  const shopifyCustomerId = String(payload.id ?? "");
-  const isWholesale = tags.includes("wholesale");
-  const isDistributor = tags.includes("distributor");
-
-  if (!isWholesale && !isDistributor) return;
-
-  // customerType is DISTRIBUTOR if the customer has the distributor tag.
-  // Rate comes from the pricing profile (no per-customer override on auto-enroll).
-  const customerType = isDistributor ? "DISTRIBUTOR" : "WHOLESALE";
-
-  await db.wholesaleCustomer.upsert({
-    where: { shopifyCustomerId },
-    create: {
-      shopifyCustomerId,
-      email: String((payload.email as string) ?? ""),
-      firstName: String((payload.first_name as string) ?? ""),
-      lastName: String((payload.last_name as string) ?? ""),
-      status: "APPROVED",
-      customerType,
-      pricingProfileId: defaultProfileIdForType(customerType),
-      discountPercent: null,
-      paymentTerms: "CREDIT_CARD",
-      approvedAt: new Date(),
-    },
-    update: {
-      email: String((payload.email as string) ?? ""),
-      firstName: String((payload.first_name as string) ?? ""),
-      lastName: String((payload.last_name as string) ?? ""),
-      // Preserve existing customerType — don't downgrade a distributor to wholesale
-      // if a webhook fires without the distributor tag (e.g. partial tag updates).
-    },
-  });
-}
