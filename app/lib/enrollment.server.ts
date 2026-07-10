@@ -186,14 +186,12 @@ export async function syncCustomerToShopify(
  *
  * For customers the app does know, this:
  *   1. keeps identity fields (email/name) in sync, and
- *   2. corrects tag drift in whichever direction it occurred:
- *      - tag removed from an APPROVED account → honored as offboarding:
- *        suspend and re-sync projections (clears remaining managed tags,
- *        sets wholesale.status=inactive) so removing the tag actually
- *        revokes pricing everywhere, instead of the App Proxy and shipping
- *        function silently continuing to grant it.
- *      - managed tag hand-added to a non-APPROVED account → strip it via
- *        sync; tags are projections of DB state, not inputs.
+ *   2. self-heals tag drift: managed tags are pure projections of DB state,
+ *      so ANY hand-edit in Shopify Admin — adding or removing — is simply
+ *      rewritten to match the database. Removing the tag from an approved
+ *      customer does NOT offboard them; the tag comes back on the next
+ *      webhook. All account-state changes (approve, suspend, type change)
+ *      happen in the app, which then re-projects.
  *
  * Loop safety: syncCustomerToShopify triggers another CUSTOMERS_UPDATE, but
  * after a sync the tags match DB state, so the re-entrant call finds no
@@ -220,30 +218,25 @@ export async function reconcileCustomerFromWebhook(
     },
   });
 
+  // Exact drift check: the managed tags present on the Shopify customer must
+  // equal the set the DB says they should have. Anything else → re-project.
   const tags = String(payload.tags ?? "")
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean);
-  const hasWholesaleTag = tags.includes("wholesale");
-  const hasManagedTag = MANAGED_TAGS.some((t) => tags.includes(t));
+  const presentManaged = MANAGED_TAGS.filter((t) => tags.includes(t)).sort();
+  const desiredManaged = (
+    customer.status === "APPROVED"
+      ? (["wholesale", typeTag(customer.customerType)].filter(Boolean) as string[])
+      : []
+  ).sort();
 
-  if (customer.status === "APPROVED" && !hasWholesaleTag) {
-    const stamp = new Date().toISOString().slice(0, 10);
-    await db.wholesaleCustomer.update({
-      where: { shopifyCustomerId },
-      data: {
-        status: "SUSPENDED",
-        notes: [
-          customer.notes,
-          `Auto-suspended ${stamp}: wholesale tag removed in Shopify Admin.`,
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      },
-    });
-    if (admin) await syncCustomerToShopify(admin, shopifyCustomerId);
-  } else if (customer.status !== "APPROVED" && hasManagedTag) {
-    if (admin) await syncCustomerToShopify(admin, shopifyCustomerId);
+  const drifted =
+    presentManaged.length !== desiredManaged.length ||
+    presentManaged.some((t, i) => t !== desiredManaged[i]);
+
+  if (drifted && admin) {
+    await syncCustomerToShopify(admin, shopifyCustomerId);
   }
 }
 
