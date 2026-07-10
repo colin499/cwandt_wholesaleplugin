@@ -37,10 +37,13 @@ Verified on the **dev store** only. Nothing has touched the live store yet.
 - Note: this is **advisory only** (warns, can't hard-block). Hard blocking would need an Order
   Validation function (deferred).
 
-### 2. Distributor discount rate — decision needed
-- Wholesale default is now **50%**, which is **equal to the distributor default (50%)**.
-- Decide whether distributors should be **deeper** (e.g. 60%). If yes it's a small change in:
-  `webhooks.tsx` (`defaultDiscount`), `app.applications.tsx`, seed, and any per-customer rows.
+### 2. Distributor discount rate — decision needed (mechanism now trivial)
+- Wholesale and distributor both sit at **50%**; whether distributors go deeper
+  (e.g. 60%) is still an open business decision.
+- **The code change is gone** (2026-07-10 restructure): rates live in
+  `PricingProfile` rows, editable in the app under **Pricing → Pricing
+  Profiles**. When decided, change the Distributor profile's percentage there —
+  every distributor without a per-customer override follows immediately.
 
 ### 3. Storefront setup / polish for Horizon
 - Enable the **"Wholesale (site-wide)"** app embed in the theme editor (Theme → Customize →
@@ -72,6 +75,13 @@ Verified on the **dev store** only. Nothing has touched the live store yet.
     `CMS_API_TOKEN`.
   - Install/authorize on the live store; run the storefront setup (§3) on the live theme;
     confirm CMS sync + pricing on real products (e.g. SKU `1PFLASH-1P` → $6.00 wholesale).
+  - **Run the backfill** (Customers page → Import & Reconcile → Dry run, review, then
+    Apply). Existing customers tagged `wholesale`/`distributor` before install are
+    invisible to the app until this runs — webhooks only cover events from install
+    forward.
+  - **Tell staff the workflow changed** (2026-07-10 restructure): tagging a customer in
+    Shopify Admin no longer onboards them (tags self-heal to match the app). Onboard,
+    suspend, and change customer types in the app's Customers page only.
 
 ---
 
@@ -81,5 +91,17 @@ Verified on the **dev store** only. Nothing has touched the live store yet.
 - Bring-your-own shipping label for large accounts.
 
 ## 🧹 Housekeeping
-- Move the repo out of the iCloud-synced `~/Documents/CW&T` folder (avoids `" 2"` esbuild
-  duplicate corruption that breaks the dev server).
+- ~~Move the repo out of the iCloud-synced `~/Documents/CW&T` folder~~ — ✅ done; repo
+  now lives at `~/Development/cwandt-wholesale-plugin`.
+
+## 🔄 2026-07-10 — Customer architecture restructure (branch `feat/unified-customers`)
+- Customers + Distributors merged into one **Customers** page (type tabs incl. B2B);
+  search the whole Shopify customer list and enroll from the app; per-row type changes.
+- **PricingProfile** table: per-segment rates editable in Pricing → Pricing Profiles;
+  per-customer discount is now an optional override (null = profile rate).
+- **Tags are no longer an input**: webhooks reconcile and self-heal tag edits in both
+  directions; enrollment only via the app. See CLAUDE.md "Customer Account Architecture".
+- **Import & Reconcile** sweep on the Customers page (dry-run default) backfills
+  pre-app tagged customers and repairs projection drift.
+- Still to do before merge: exercise end-to-end against the dev store (enroll → tags in
+  Admin → storefront pricing → suspend → revoked), and brief Colin on the workflow change.

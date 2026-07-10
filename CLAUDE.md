@@ -37,10 +37,11 @@ found"`) — the tunnel dies within the hour and the CLI freezes at "Preparing d
 workaround for the stale-cloudflared problem; it is incompatible with standard dev and caused
 multi-day freezes. `dev-proxy.mjs` is now dead code.
 
-**iCloud sync caveat:** this repo lives under `~/Documents/CW&T`, covered by iCloud "Desktop &
-Documents" sync. Sync periodically creates `" 2"` duplicate binaries inside `node_modules` (e.g.
-`@esbuild/.../bin/esbuild 2`) and can corrupt the originals, breaking builds confusingly.
-**Strongly consider moving the repo out of the synced folder** (or excluding `node_modules`).
+**iCloud sync caveat — resolved:** the repo now lives at
+`~/Development/cwandt-wholesale-plugin`, outside iCloud "Desktop & Documents"
+sync. (Historical: under `~/Documents/CW&T`, sync created `" 2"` duplicate
+binaries inside `node_modules` and corrupted builds. Keep the repo out of any
+synced folder.)
 
 ### Troubleshooting "the dev server is broken"
 
@@ -67,6 +68,44 @@ Documents" sync. Sync periodically creates `" 2"` duplicate binaries inside `nod
 - [ ] Step 9: CMS sync (GET /api/wholesale/variants/ endpoint on cms.cwandt.com)
 - [ ] Step 10: Admin dashboard polish
 
+## Customer Account Architecture (restructured 2026-07-10)
+
+**The local `WholesaleCustomer` row is the single source of truth for account
+state.** Shopify carries two WRITE-ONLY projections of it, each existing because
+of a platform constraint:
+
+- **Customer tags** (`wholesale`, plus `distributor`/`b2b` by type) — the only
+  signal Liquid theme blocks can read cheaply. Also useful for Admin segments.
+- **`wholesale.status` customer metafield** — the only signal Shopify Functions
+  and Checkout UI extensions can read (they cannot see tags / call the app).
+
+Both are written exclusively by `syncCustomerToShopify()` in
+`app/lib/enrollment.server.ts`. **Nothing reads them back as authority.**
+
+Rules that follow (do not regress these):
+
+- **Enrollment happens only in the app** — via the Customers page (search any
+  Shopify customer / create by email) or application approval. Both call
+  `enrollCustomer()`. Hand-tagging a customer in Shopify Admin does NOT create
+  an account (the old auto-approve-at-default-discount webhook path is dead).
+- **Tags self-heal.** `reconcileCustomerFromWebhook()` compares the managed
+  tags on every customer webhook against the exact set the DB prescribes and
+  rewrites them on any mismatch, in either direction. Removing the tag in
+  Admin does not offboard anyone — it comes back. Suspend/approve/type-change
+  only work in the app.
+- **Pricing comes from `PricingProfile` rows** (fixed ids `pp_wholesale`,
+  `pp_distributor`, `pp_b2b`, seeded by migration). `customerType` is
+  segmentation only. Per-customer `discountPercent` is a nullable override;
+  null = profile rate. Effective rate = `resolveDiscountPercent()`:
+  override ?? profile ?? 50. Adding a segment = new profile row, not code.
+  Profiles are edited in Pricing → Pricing Profiles.
+- **Backfill/reconcile sweep** (`backfillFromShopify()`, run from the
+  Customers page → Import & Reconcile): enrolls Shopify customers tagged
+  before the app existed and repairs any tag/metafield drift (e.g. edits made
+  while the app was down and webhooks were dropped). Dry-run by default.
+  **Must be run once after installing on the live store** — webhooks only
+  cover events from install-time forward.
+
 ## Key Decisions
 
 | Decision | Choice | Why |
@@ -92,15 +131,19 @@ app/
   shopify.server.ts                  — Shopify app config, webhooks, auth
   lib/
     wholesale-customer.server.ts     — Core middleware (getWholesaleSession, pricing math)
+    enrollment.server.ts             — Source-of-truth machinery: enrollCustomer, syncCustomerToShopify,
+                                       reconcileCustomerFromWebhook, backfillFromShopify, pricing profile ids
     cms-client.server.ts             — CMS API client stub (Step 9)
   routes/
     app._index.tsx                   — Dashboard
-    app.customers.tsx                — Wholesale customer list + status + per-customer min order value
-    app.distributors.tsx             — Distributor account management (create, status, min order value)
-    app.applications.tsx             — Application review (approve / reject)
-    app.pricing.tsx                  — Pricing rules + order minimums
+    app.customers.tsx                — Unified Customers page: all types (wholesale/distributor/b2b) with
+                                       filter tabs, Shopify-wide search + enroll, per-row type/status/minimum,
+                                       Import & Reconcile (backfill) card
+    app.distributors.tsx             — Redirect → /app/customers (merged 2026-07-10)
+    app.applications.tsx             — Application review (approve / reject) — approve calls enrollCustomer
+    app.pricing.tsx                  — Pricing profiles + pricing rules + order minimums
     app-proxy.$.tsx                  — App Proxy: /apps/wholesale/prices, /order-minimums
-    webhooks.tsx                     — Shopify webhook handler
+    webhooks.tsx                     — Shopify webhook handler (customer webhooks reconcile, never enroll)
 
 extensions/wholesale-ui/
   blocks/
@@ -177,8 +220,9 @@ input query in the sibling `.graphql`. US is checked per delivery group via
 `deliveryAddress.countryCode === CountryCode.Us`.
 
 **Customer detection**: reads the same `wholesale.status` customer metafield as the checkout
-extension. Metafield is written on every approve/suspend/reject in `app.customers.tsx` and
-`app.applications.tsx`.
+extension. The metafield is written exclusively by `syncCustomerToShopify()`
+(`app/lib/enrollment.server.ts`), which runs on every enrollment and every
+status/type/minimum change made in the app.
 
 **Auto-activation**: `shopify.server.ts` `afterAuth` calls `deliveryCustomizationCreate` on
 OAuth completion. It checks for an existing record first to avoid duplicates, and no-ops
@@ -222,13 +266,10 @@ Reviewed 2026-05-12. Issues are ordered by likelihood of causing real problems.
 
 ### HIGH — Will definitely need attention
 
-**1. `shopify.app.toml` placeholders not filled in**
-Three placeholders must be replaced before `shopify app dev` works:
-- `YOUR_CLIENT_ID_FROM_PARTNER_DASHBOARD`
-- `YOUR_DEV_STORE.myshopify.com`
-- `YOUR_APP_URL.fly.dev` (also in the `[app_proxy]` section)
-
-Without these, OAuth will fail with cryptic errors.
+**1. ~~`shopify.app.toml` placeholders not filled in~~ — RESOLVED**
+`client_id` and `dev_store_url` are populated; dev URLs are auto-managed by
+the CLI (`automatically_update_urls_on_dev = true`). Production
+`application_url`/`redirect_urls` still need setting at deploy time.
 
 **2. Theme CSS selectors may not match**
 `wholesale-price.liquid` hides retail prices with:
@@ -272,12 +313,13 @@ The `qty` passed to the App Proxy comes from the product form quantity input.
 Volume tier discounts therefore apply per-product quantity shown on the product page,
 not the total cart quantity. Behavior may differ from what merchants expect.
 
-**8. `CUSTOMERS_UPDATE` webhook auto-approves at default 40% discount**
-`handleCustomerWebhook` in `webhooks.tsx` creates a `WholesaleCustomer` with
-`status: "APPROVED"` and `discountPercent: 40` whenever a customer with the `wholesale`
-tag is seen via webhook. This means manually tagging a customer in Shopify Admin bypasses
-the application review flow and hardcodes 40% discount. Intentional, but the admin should
-know this shortcut exists.
+**8. ~~`CUSTOMERS_UPDATE` webhook auto-approves~~ — REMOVED (2026-07-10)**
+Customer webhooks no longer enroll anyone. Hand-tagging a customer in Shopify
+Admin does nothing (the tag is rewritten to match DB state on the next
+webhook). Enrollment happens only via the app's Customers page or application
+approval. See "Customer Account Architecture" above. The behavioral change to
+communicate to staff: **tagging in Admin no longer onboards a wholesale
+customer — use the app.**
 
 ### LOW — Not bugs, but worth knowing
 

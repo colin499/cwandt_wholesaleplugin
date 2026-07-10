@@ -23,6 +23,8 @@ import {
   resolveDiscountPercent,
   syncCustomerToShopify,
   defaultProfileIdForType,
+  backfillFromShopify,
+  type BackfillResult,
 } from "../lib/enrollment.server";
 
 const CUSTOMER_TYPES = [
@@ -145,6 +147,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ error: "Could not enroll customer. See server log." }, { status: 500 });
     }
     return json({ enrolled: true });
+  }
+
+  // ── Backfill / reconcile sweep ────────────────────────────────────────────
+  if (intent === "backfill") {
+    const dryRun = String(formData.get("mode")) !== "apply";
+    try {
+      const backfill = await backfillFromShopify(admin, { dryRun });
+      return json({ backfill });
+    } catch (err) {
+      console.error("[customers] backfill failed:", err);
+      return json({ error: "Backfill failed. See server log." }, { status: 500 });
+    }
   }
 
   // ── Row updates ───────────────────────────────────────────────────────────
@@ -474,6 +488,64 @@ function AddCustomerCard() {
   );
 }
 
+function BackfillCard() {
+  const fetcher = useFetcher<{ backfill?: BackfillResult; error?: string }>();
+  const r = fetcher.data?.backfill;
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h2" variant="headingMd">Import &amp; Reconcile</Text>
+        <Text as="p" tone="subdued">
+          Scans every Shopify customer with a wholesale/distributor/b2b tag. Customers the
+          app doesn&apos;t know yet are enrolled (needed once after installing on a store
+          with existing wholesale accounts); customers it does know get their tags and
+          metafields repaired if they&apos;ve drifted. Dry run reports without writing.
+        </Text>
+        <InlineStack gap="200">
+          <fetcher.Form method="post">
+            <input type="hidden" name="intent" value="backfill" />
+            <input type="hidden" name="mode" value="dry" />
+            <Button submit loading={fetcher.state !== "idle"}>Dry run</Button>
+          </fetcher.Form>
+          <fetcher.Form method="post">
+            <input type="hidden" name="intent" value="backfill" />
+            <input type="hidden" name="mode" value="apply" />
+            <Button submit variant="primary" tone="critical" loading={fetcher.state !== "idle"}>
+              Apply
+            </Button>
+          </fetcher.Form>
+        </InlineStack>
+        {fetcher.data?.error && <Banner tone="critical">{fetcher.data.error}</Banner>}
+        {r && (
+          <Banner tone={r.dryRun ? "info" : "success"}>
+            <BlockStack gap="100">
+              <Text as="p">
+                {r.dryRun ? "Dry run — nothing written. " : "Applied. "}
+                Scanned {r.scanned} tagged customer{r.scanned === 1 ? "" : "s"}:{" "}
+                {r.enrolled.length} {r.dryRun ? "would be " : ""}enrolled,{" "}
+                {r.healed.length} {r.dryRun ? "would be " : ""}repaired
+                {r.skippedNoEmail > 0 ? `, ${r.skippedNoEmail} skipped (no email)` : ""}.
+                {r.truncated ? " WARNING: more customers remain beyond the scan cap." : ""}
+              </Text>
+              {r.enrolled.length > 0 && (
+                <Text as="p" variant="bodySm">
+                  Enroll: {r.enrolled.map((e) => `${e.email} (${e.customerType.toLowerCase()})`).join(", ")}
+                </Text>
+              )}
+              {r.healed.length > 0 && (
+                <Text as="p" variant="bodySm">
+                  Repair: {r.healed.map((h) => `${h.email} — ${h.reason}`).join("; ")}
+                </Text>
+              )}
+            </BlockStack>
+          </Banner>
+        )}
+      </BlockStack>
+    </Card>
+  );
+}
+
 export default function CustomersPage() {
   const { customers } = useLoaderData<typeof loader>();
   const [tab, setTab] = useState(0);
@@ -530,6 +602,8 @@ export default function CustomersPage() {
             </IndexTable>
           </Tabs>
         </Card>
+
+        <BackfillCard />
       </BlockStack>
     </Page>
   );

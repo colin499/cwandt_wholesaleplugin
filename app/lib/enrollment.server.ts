@@ -240,6 +240,172 @@ export async function reconcileCustomerFromWebhook(
   }
 }
 
+export type BackfillResult = {
+  scanned: number;
+  enrolled: Array<{ email: string; customerType: string }>;
+  healed: Array<{ email: string; reason: string }>;
+  skippedNoEmail: number;
+  truncated: boolean;
+  dryRun: boolean;
+};
+
+/**
+ * Backfill + reconcile sweep. Pages through every Shopify customer carrying a
+ * managed tag and:
+ *   - customers with NO local row → enrolls them as APPROVED (trusting the
+ *     legacy tag as the source of record from before this app), typed by tag
+ *     (distributor > b2b > wholesale)
+ *   - customers WITH a local row → re-projects if their tags or
+ *     wholesale.status metafield have drifted from DB state (heals edits
+ *     that happened while the app was down and webhooks were dropped)
+ *
+ * Needed before go-live: customer webhooks only fire on create/update going
+ * forward, so accounts tagged before the app was installed are invisible to
+ * it until this runs. With dryRun (the default) nothing is written — the
+ * result reports what WOULD happen.
+ */
+export async function backfillFromShopify(
+  admin: AdminClient,
+  { dryRun = true }: { dryRun?: boolean } = {}
+): Promise<BackfillResult> {
+  const result: BackfillResult = {
+    scanned: 0,
+    enrolled: [],
+    healed: [],
+    skippedNoEmail: 0,
+    truncated: false,
+    dryRun,
+  };
+
+  const MAX_PAGES = 40; // 40 × 50 = 2000 tagged customers; raise if ever needed
+  let cursor: string | null = null;
+  const seenIds = new Set<string>();
+  let sweptAllPages = false;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const res = await admin.graphql(
+      `query TaggedCustomers($cursor: String) {
+        customers(
+          first: 50
+          after: $cursor
+          query: "tag:wholesale OR tag:distributor OR tag:b2b"
+        ) {
+          pageInfo { hasNextPage endCursor }
+          edges {
+            node {
+              legacyResourceId
+              email
+              firstName
+              lastName
+              tags
+              metafield(namespace: "wholesale", key: "status") { value }
+            }
+          }
+        }
+      }`,
+      { variables: { cursor } }
+    );
+    const data = await res.json();
+    const conn = data.data?.customers;
+    if (!conn) break;
+
+    for (const edge of conn.edges ?? []) {
+      const node = edge.node;
+      result.scanned++;
+
+      const shopifyCustomerId = String(node.legacyResourceId);
+      seenIds.add(shopifyCustomerId);
+      const tags: string[] = node.tags ?? [];
+      const existing = await db.wholesaleCustomer.findUnique({
+        where: { shopifyCustomerId },
+      });
+
+      if (!existing) {
+        if (!node.email) {
+          result.skippedNoEmail++;
+          continue;
+        }
+        const customerType = tags.includes("distributor")
+          ? "DISTRIBUTOR"
+          : tags.includes("b2b")
+            ? "B2B"
+            : "WHOLESALE";
+        result.enrolled.push({ email: node.email, customerType });
+        if (!dryRun) {
+          await db.wholesaleCustomer.create({
+            data: {
+              shopifyCustomerId,
+              email: node.email,
+              firstName: node.firstName ?? null,
+              lastName: node.lastName ?? null,
+              status: "APPROVED",
+              customerType,
+              pricingProfileId: defaultProfileIdForType(customerType),
+              discountPercent: null,
+              paymentTerms: "CREDIT_CARD",
+              approvedAt: new Date(),
+              approvedBy: "backfill",
+            },
+          });
+          await syncCustomerToShopify(admin, shopifyCustomerId);
+        }
+        continue;
+      }
+
+      // Known customer — check both projections for drift.
+      const approved = existing.status === "APPROVED";
+      const desiredManaged = (
+        approved
+          ? (["wholesale", typeTag(existing.customerType)].filter(Boolean) as string[])
+          : []
+      ).sort();
+      const presentManaged = MANAGED_TAGS.filter((t) => tags.includes(t)).sort();
+      const tagsDrifted =
+        presentManaged.length !== desiredManaged.length ||
+        presentManaged.some((t, i) => t !== desiredManaged[i]);
+      const desiredStatus = approved ? "approved" : "inactive";
+      const metafieldDrifted = (node.metafield?.value ?? null) !== desiredStatus;
+
+      if (tagsDrifted || metafieldDrifted) {
+        result.healed.push({
+          email: existing.email,
+          reason: tagsDrifted ? "tags out of sync" : "status metafield out of sync",
+        });
+        if (!dryRun) {
+          await syncCustomerToShopify(admin, shopifyCustomerId);
+        }
+      }
+    }
+
+    if (!conn.pageInfo?.hasNextPage) {
+      sweptAllPages = true;
+      break;
+    }
+    cursor = conn.pageInfo.endCursor;
+  }
+
+  if (!sweptAllPages) result.truncated = true; // hit MAX_PAGES with more remaining
+
+  // Second pass: APPROVED rows whose Shopify customer carries NO managed tag
+  // never matched the tag query above, but are drifted by definition (an
+  // approved account must have the wholesale tag). Only sound if the sweep
+  // saw every tagged customer — skip when truncated.
+  if (sweptAllPages) {
+    const approvedRows = await db.wholesaleCustomer.findMany({
+      where: { status: "APPROVED", shopifyCustomerId: { notIn: [...seenIds] } },
+      select: { shopifyCustomerId: true, email: true },
+    });
+    for (const row of approvedRows) {
+      result.healed.push({ email: row.email, reason: "wholesale tag missing entirely" });
+      if (!dryRun) {
+        await syncCustomerToShopify(admin, row.shopifyCustomerId);
+      }
+    }
+  }
+
+  return result;
+}
+
 export type EnrollInput = {
   email: string;
   firstName?: string;
