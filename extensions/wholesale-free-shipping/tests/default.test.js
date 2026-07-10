@@ -18,7 +18,9 @@ describe("Default Integration Test", () => {
     functionInfo = await getFunctionInfo(functionDir);
     ({ schemaPath, functionRunnerPath, wasmPath, targeting } = functionInfo);
     schema = await loadSchema(schemaPath);
-  }, 45000);
+    // buildFunction + getFunctionInfo each shell out to the Shopify CLI; together they take
+    // ~90s cold on a slower machine, so the scaffold's 45s default is not enough.
+  }, 300000);
 
   const fixturesDir = path.join(__dirname, "fixtures");
   const fixtureFiles = fs
