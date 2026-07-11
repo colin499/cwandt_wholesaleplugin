@@ -2,7 +2,6 @@ import "@shopify/shopify-app-remix/adapters/node";
 import {
   ApiVersion,
   AppDistribution,
-  DeliveryMethod,
   shopifyApp,
 } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
@@ -81,39 +80,13 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(db),
   distribution: AppDistribution.SingleMerchant,
-  webhooks: {
-    APP_UNINSTALLED: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks",
-    },
-    ORDERS_CREATE: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks",
-    },
-    ORDERS_UPDATED: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks",
-    },
-    PRODUCTS_UPDATE: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks",
-    },
-    INVENTORY_LEVELS_UPDATE: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks",
-    },
-    CUSTOMERS_CREATE: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks",
-    },
-    CUSTOMERS_UPDATE: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks",
-    },
-  },
+  // Webhooks are declared in shopify.app.toml ONLY. The old API registration
+  // here (registerWebhooks in afterAuth) never took effect reliably — it ran
+  // fire-and-forget on OAuth and pinned callbacks to whatever tunnel URL
+  // existed at the time. TOML subscriptions with relative URIs follow
+  // application_url automatically. Do not reintroduce the API path.
   hooks: {
-    afterAuth: async ({ session, admin }) => {
-      shopify.registerWebhooks({ session });
+    afterAuth: async ({ admin }) => {
       await enableWholesaleShippingFunction(admin);
     },
   },

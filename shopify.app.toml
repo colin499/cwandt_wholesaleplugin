@@ -24,14 +24,32 @@ redirect_urls = [
 [webhooks]
 api_version = "2026-04"
 
+  # All topics declared here (not via the API in afterAuth): relative URIs
+  # resolve against application_url, which the CLI rewrites every dev session,
+  # so subscriptions survive tunnel changes. API-registered webhooks silently
+  # rotted (webhookSubscriptions came back empty on the dev store, 2026-07-11).
   [[webhooks.subscriptions]]
   uri = "/webhooks"
   topics = [
     "products/create",
     "products/update",
     "inventory_levels/update",
-    "app/uninstalled"
+    "app/uninstalled",
+    "customers/create",
+    "customers/update",
+    "orders/create",
+    "orders/updated"
   ]
+
+  # GDPR compliance topics (mandatory handlers; also back the data-protection
+  # attestations made in the Partner Dashboard)
+  [[webhooks.subscriptions]]
+  compliance_topics = [
+    "customers/data_request",
+    "customers/redact",
+    "shop/redact"
+  ]
+  uri = "/webhooks"
 
 [app_proxy]
 url = "https://actor-sees-uncle-peripherals.trycloudflare.com/app-proxy"

@@ -113,41 +113,56 @@ export async function syncCustomerToShopify(
     });
   }
 
+  // Each mutation reports failures via userErrors inside a 200 response —
+  // they do NOT throw. Check every one so a denied write can't fail silently.
+  const runMutation = async (label: string, query: string, variables: Record<string, unknown>) => {
+    const res = await admin.graphql(query, { variables });
+    const body = await res.json();
+    const payload = body.data?.[Object.keys(body.data ?? {})[0] ?? ""] ?? {};
+    const userErrors = payload.userErrors ?? [];
+    if (userErrors.length > 0) {
+      throw new Error(`${label}: ${userErrors.map((e: any) => e.message).join("; ")}`);
+    }
+  };
+
   const ops: Promise<unknown>[] = [];
 
   if (desired.length > 0) {
     ops.push(
-      admin.graphql(
+      runMutation(
+        "tagsAdd",
         `mutation AddManagedTags($id: ID!, $tags: [String!]!) {
           tagsAdd(id: $id, tags: $tags) {
             node { id }
             userErrors { field message }
           }
         }`,
-        { variables: { id: gid, tags: desired } }
+        { id: gid, tags: desired }
       )
     );
   }
   ops.push(
-    admin.graphql(
+    runMutation(
+      "tagsRemove",
       `mutation RemoveManagedTags($id: ID!, $tags: [String!]!) {
         tagsRemove(id: $id, tags: $tags) {
           node { id }
           userErrors { field message }
         }
       }`,
-      { variables: { id: gid, tags: toRemove } }
+      { id: gid, tags: toRemove }
     )
   );
   ops.push(
-    admin.graphql(
+    runMutation(
+      "metafieldsSet",
       `mutation SetWholesaleMetafields($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
           metafields { id }
           userErrors { field message }
         }
       }`,
-      { variables: { metafields } }
+      { metafields }
     )
   );
 

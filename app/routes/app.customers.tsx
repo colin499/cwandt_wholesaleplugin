@@ -144,7 +144,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     } catch (err) {
       console.error("[customers] enroll failed:", err);
-      return json({ error: "Could not enroll customer. See server log." }, { status: 500 });
+      // Surface the underlying GraphQL/user error — "see server log" hides
+      // actionable causes like missing scopes or protected customer data.
+      const detail =
+        err instanceof Error
+          ? [err.message, JSON.stringify((err as any).body?.errors ?? "") !== '""' ? JSON.stringify((err as any).body?.errors) : ""]
+              .filter(Boolean)
+              .join(" — ")
+          : String(err);
+      return json({ error: `Could not enroll customer: ${detail}` }, { status: 500 });
     }
     return json({ enrolled: true });
   }

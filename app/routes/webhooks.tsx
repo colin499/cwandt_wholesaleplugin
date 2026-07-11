@@ -46,6 +46,50 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await reconcileCustomerFromWebhook(payload as Record<string, unknown>, admin);
       break;
 
+    // ── GDPR compliance topics (mandatory) ─────────────────────────────────
+    case "CUSTOMERS_DATA_REQUEST": {
+      // Merchant has 30 days to provide the customer's data. Log what we
+      // hold so the merchant can fulfil the request from the admin.
+      const customerId = String((payload as any).customer?.id ?? "");
+      const held = customerId
+        ? await db.wholesaleCustomer.findUnique({
+            where: { shopifyCustomerId: customerId },
+            include: { orders: true, application: true },
+          })
+        : null;
+      console.log(
+        `[gdpr] customers/data_request for customer ${customerId}: ` +
+          (held
+            ? `1 account record, ${held.orders.length} order records, ` +
+              `${held.application ? 1 : 0} application record`
+            : "no data held")
+      );
+      break;
+    }
+
+    case "CUSTOMERS_REDACT": {
+      // Erase everything we hold about this customer.
+      const customerId = String((payload as any).customer?.id ?? "");
+      if (customerId) {
+        await db.wholesaleApplication.deleteMany({ where: { shopifyCustomerId: customerId } });
+        await db.wholesaleOrder.deleteMany({ where: { shopifyCustomerId: customerId } });
+        await db.wholesaleCustomer.deleteMany({ where: { shopifyCustomerId: customerId } });
+        console.log(`[gdpr] customers/redact: erased all records for customer ${customerId}`);
+      }
+      break;
+    }
+
+    case "SHOP_REDACT": {
+      // Store data erasure request (48h after uninstall). Single-store app:
+      // wipe all customer-related data.
+      await db.wholesaleApplication.deleteMany({});
+      await db.wholesaleOrder.deleteMany({});
+      await db.wholesaleCustomer.deleteMany({});
+      await db.session.deleteMany({ where: { shop } });
+      console.log(`[gdpr] shop/redact: erased all data for ${shop}`);
+      break;
+    }
+
     default:
       console.log(`Unhandled webhook topic: ${topic}`);
   }
