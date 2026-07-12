@@ -182,6 +182,70 @@ export async function getCmsVariant(
 }
 
 // ---------------------------------------------------------------------------
+// Wholesale availability + price resolution
+//
+// A variant is available for wholesale iff:
+//   1. it has a CMS row (presence in CmsVariantCache = curated into the
+//      program — the CMS WholesaleVariant table is the source of truth),
+//   2. it is NOT listed in the product's custom.wholesale_hidden_variants
+//      metafield (the projection the live theme's variant picker also reads),
+//   3. its product is ACTIVE in Shopify.
+//
+// There is deliberately NO fallback price for variants outside the program:
+// not in the CMS means not wholesale, full stop. (The old flat-discount
+// fallback made every product wholesale-buyable by default.)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses the custom.wholesale_hidden_variants product metafield value into a
+ * set of numeric variant-id strings. The metafield holds a JSON array of
+ * variant GIDs (or a single GID string); tolerate both, plus junk.
+ */
+export function parseHiddenVariantIds(raw: string | null | undefined): Set<string> {
+  const ids = new Set<string>();
+  if (!raw) return ids;
+  let entries: unknown[] = [];
+  try {
+    const parsed = JSON.parse(raw);
+    entries = Array.isArray(parsed) ? parsed : [parsed];
+  } catch {
+    entries = [raw];
+  }
+  for (const entry of entries) {
+    const match = /(\d+)\s*$/.exec(String(entry));
+    if (match) ids.add(match[1]);
+  }
+  return ids;
+}
+
+export type VariantWholesaleState =
+  | { available: true; priceCents: number; moq: number; discountPercent: number }
+  | { available: false };
+
+/**
+ * Resolves a single variant's wholesale state from data the caller already
+ * has in hand. discountPercent is derived (retail vs CMS price) for display.
+ */
+export function resolveVariantWholesale(opts: {
+  cms: CmsCachedVariant | undefined;
+  variantId: number | string;
+  hiddenVariantIds: Set<string>;
+  productActive: boolean;
+  customerType: string;
+  retailCents: number;
+}): VariantWholesaleState {
+  const { cms, variantId, hiddenVariantIds, productActive, customerType, retailCents } = opts;
+  if (!cms || !productActive || hiddenVariantIds.has(String(variantId))) {
+    return { available: false };
+  }
+  const priceCents =
+    customerType === "DISTRIBUTOR" ? cms.distributorPriceCents : cms.wholesalePriceCents;
+  const discountPercent =
+    retailCents > 0 ? Math.round((1 - priceCents / retailCents) * 100) : 0;
+  return { available: true, priceCents, moq: cms.moq, discountPercent };
+}
+
+// ---------------------------------------------------------------------------
 // Sync state — used by the admin sync page
 // ---------------------------------------------------------------------------
 

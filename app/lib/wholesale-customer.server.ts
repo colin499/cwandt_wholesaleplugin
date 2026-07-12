@@ -63,71 +63,12 @@ export async function getWholesaleSession(
   };
 }
 
-/**
- * Returns the active global discount percentage.
- * Falls back to the customer's own discountPercent if no global rule exists.
- * Volume-tier rules are checked separately via applyVolumeTier().
- */
-export async function getActiveGlobalDiscount(
-  fallbackPercent = 50
-): Promise<number> {
-  const rule = await db.pricingRule.findFirst({
-    where: { type: "GLOBAL_DISCOUNT", active: true },
-    orderBy: { sortOrder: "asc" },
-  });
-  return rule?.discountPercent ?? fallbackPercent;
-}
-
-/**
- * Returns the configured maximum combined discount percentage.
- * Defaults to 70 if no WholesaleSettings row exists yet.
- */
-export async function getMaxDiscountPercent(): Promise<number> {
-  const settings = await db.wholesaleSettings.findFirst();
-  return settings?.maxDiscountPercent ?? 70;
-}
-
-/**
- * Returns the effective discount for a given base discount and cart quantity,
- * stacking the best matching volume tier on top.
- *
- * The result is capped at WholesaleSettings.maxDiscountPercent (default 70%).
- * This prevents misconfigured rules (e.g. 60% global + 50% tier) from
- * producing a negative price.
- */
-export async function applyVolumeTier(
-  baseDiscount: number,
-  cartQuantity: number
-): Promise<number> {
-  const [tiers, settings] = await Promise.all([
-    db.pricingRule.findMany({
-      where: { type: "VOLUME_TIER", active: true },
-      orderBy: { minimumQuantity: "desc" }, // highest threshold first
-    }),
-    db.wholesaleSettings.findFirst(),
-  ]);
-
-  const maxDiscount = settings?.maxDiscountPercent ?? 70;
-
-  for (const tier of tiers) {
-    if (tier.minimumQuantity && cartQuantity >= tier.minimumQuantity) {
-      return Math.min(baseDiscount + tier.discountPercent, maxDiscount);
-    }
-  }
-
-  return Math.min(baseDiscount, maxDiscount);
-}
-
-/**
- * Calculates the wholesale price in cents given a retail price in cents and
- * a discount percentage. Rounds to nearest cent.
- */
-export function calculateWholesalePrice(
-  retailPriceCents: number,
-  discountPercent: number
-): number {
-  return Math.round(retailPriceCents * (1 - discountPercent / 100));
-}
+// NOTE (2026-07-12, Phase A): the percentage-discount machinery that lived
+// here — getActiveGlobalDiscount, applyVolumeTier, calculateWholesalePrice,
+// getMaxDiscountPercent — was removed. Storefront pricing is CMS-driven per
+// variant (see cms-client.server.ts resolveVariantWholesale); variants not in
+// the CMS are simply not wholesale. The PricingRule table still exists but is
+// read by nothing; drop it in a future cleanup migration.
 
 /**
  * Returns the active order minimum config. Safe to call on every request —

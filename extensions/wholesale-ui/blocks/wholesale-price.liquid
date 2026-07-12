@@ -42,6 +42,20 @@
     [class*="ProductPrice"] {
       visibility: hidden !important;
     }
+    /* Reveal retail again when wholesale.js determines this product is NOT
+       in the wholesale program (no CMS prices). Without this, a wholesale
+       customer would see no price at all on retail-only products. */
+    html.wh-show-retail product-price,
+    html.wh-show-retail .price,
+    html.wh-show-retail .price__regular,
+    html.wh-show-retail .price__sale,
+    html.wh-show-retail .price--main,
+    html.wh-show-retail .price-item--regular,
+    html.wh-show-retail .price-item--sale,
+    html.wh-show-retail [class*="product__price"],
+    html.wh-show-retail [class*="ProductPrice"] {
+      visibility: visible !important;
+    }
   {% endstyle %}
 
   {% comment %} Load CSS and JS for the wholesale UI. {% endcomment %}

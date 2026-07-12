@@ -70,16 +70,39 @@ editable, MOQ per variant), and per-row Remove. Your API endpoint is unchanged.
 
 **Heads-up:** your GitHub Actions auto-deploy works great — which also means
 `git push` to CMS main is a production deploy. Pull before working; Taylor and
-Claude have pushed (`c71c083`, `a3e0199`, version now 0.14.0).
+Claude have pushed (`c71c083`, `a3e0199`, `72c73c7`; version now 0.14.1).
+
+**Your gunicorn ghost is exorcised** (`72c73c7`): deploys were silently
+half-failing — `pkill` can't see other processes in this VPS's SSH sessions
+(procps fails), so the old gunicorn kept :8099, the new one died with
+"Connection in use", and the site served stale code while the deploy reported
+success. That's almost certainly what your `0fe06bf` restart fix was chasing.
+deploy.sh now kills the port-holder via `fuser` (which works there) and fails
+loudly if gunicorn isn't listening afterwards.
+
+## Pricing is now CMS-driven end to end ("Phase A", done 2026-07-12)
+
+Wholesale availability = has CMS row AND not in
+`custom.wholesale_hidden_variants` metafield AND Shopify product Active —
+enforced by every App Proxy endpoint including backorder creation (which now
+prices from the CMS and enforces MOQ, instead of a blanket percentage).
+**The flat 50%-off fallback is dead**: not in the CMS = not wholesale — no
+price, no card label, not on the line sheet, not backorderable. On PDPs the
+storefront JS reveals retail pricing for non-program products (the price
+block's CSS used to hide retail unconditionally, which would have left no
+price at all).
+
+Your GLOBAL_DISCOUNT / VOLUME_TIER / PRODUCT_OVERRIDE pricing-rule system is
+retired — removed from resolution and from the admin UI, along with the
+Settings "Pricing Policy" max-discount cap. The PricingRule table and
+maxDiscountPercent column still exist but nothing reads them (future cleanup
+migration). PRODUCT_OVERRIDE was never read by anything, for what it's worth.
 
 ## Planned next (not built yet)
 
-- **App "Phase A"**: wholesale availability = has CMS row AND not in
-  `custom.wholesale_hidden_variants` metafield AND Shopify product Active.
-  The flat 50%-off fallback for non-CMS products dies (not-in-CMS = not
-  wholesale). GLOBAL_DISCOUNT / VOLUME_TIER / PRODUCT_OVERRIDE pricing rules
-  retire — CMS per-variant prices + profiles cover everything.
-- CMS API endpoint to apply the same hidden-variants exclusion the sheet uses.
+- CMS API endpoint to apply the same hidden-variants exclusion the sheet uses
+  (until then, hidden variants are excluded app-side at price time — same
+  result, the metafield is read from Shopify directly).
 - MOQ display + enforcement (real MOQs to be entered; all 115 rows currently
   sit at the seeded default of 5).
 - Pack increments (e.g. Time Since Launch 25-pack) via a future

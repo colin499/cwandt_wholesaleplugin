@@ -22,20 +22,9 @@ import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 
 // ── Zod schemas ──────────────────────────────────────────────────────────────
-
-const CreateRuleSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  type: z.enum(["GLOBAL_DISCOUNT", "VOLUME_TIER", "PRODUCT_OVERRIDE"]),
-  discountPercent: z.coerce
-    .number()
-    .gt(0, "Discount must be greater than 0")
-    .max(100, "Discount cannot exceed 100%"),
-  minimumQuantity: z.coerce
-    .number()
-    .int("Minimum quantity must be a whole number")
-    .positive("Minimum quantity must be positive")
-    .nullable(),
-});
+// (Phase A, 2026-07-12: the PricingRule system — global discount, volume
+// tiers, product overrides — was retired. Storefront pricing is CMS-driven
+// per variant; profiles below carry per-segment terms and metadata.)
 
 const UpdateProfileSchema = z.object({
   discountPercent: z.coerce
@@ -65,22 +54,15 @@ const UpdateMinimumsSchema = z.object({
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
 
-  const [rules, minimumConfig, settings, profiles] = await Promise.all([
-    db.pricingRule.findMany({ orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] }),
+  const [minimumConfig, profiles] = await Promise.all([
     db.orderMinimumConfig.findFirst({ where: { active: true } }),
-    db.wholesaleSettings.findFirst(),
     db.pricingProfile.findMany({
       orderBy: { name: "asc" },
       include: { _count: { select: { customers: true } } },
     }),
   ]);
 
-  return json({
-    rules,
-    minimumConfig,
-    maxDiscountPercent: settings?.maxDiscountPercent ?? 70,
-    profiles,
-  });
+  return json({ minimumConfig, profiles });
 };
 
 // ── Action ───────────────────────────────────────────────────────────────────
@@ -89,45 +71,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = String(formData.get("intent"));
-
-  if (intent === "create-rule") {
-    const raw = {
-      name: String(formData.get("name") ?? ""),
-      type: String(formData.get("type") ?? ""),
-      discountPercent: formData.get("discountPercent"),
-      minimumQuantity: formData.get("minimumQuantity") || null,
-    };
-
-    const result = CreateRuleSchema.safeParse(raw);
-    if (!result.success) {
-      return json(
-        { errors: result.error.flatten().fieldErrors },
-        { status: 422 }
-      );
-    }
-
-    await db.pricingRule.create({ data: result.data });
-    return json({ ok: true });
-  }
-
-  if (intent === "toggle-rule") {
-    const ruleId = String(formData.get("ruleId"));
-    const rule = await db.pricingRule.findUnique({ where: { id: ruleId } });
-    if (rule) {
-      await db.pricingRule.update({
-        where: { id: ruleId },
-        data: { active: !rule.active },
-      });
-    }
-    return json({ ok: true });
-  }
-
-  if (intent === "delete-rule") {
-    await db.pricingRule.delete({
-      where: { id: String(formData.get("ruleId")) },
-    });
-    return json({ ok: true });
-  }
 
   if (intent === "update-profile") {
     const profileId = String(formData.get("profileId"));
@@ -281,7 +224,7 @@ function ProfileRow({
 }
 
 export default function PricingPage() {
-  const { rules, minimumConfig, maxDiscountPercent, profiles } = useLoaderData<typeof loader>();
+  const { minimumConfig, profiles } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
 
   const [minOrderValue, setMinOrderValue] = useState(
@@ -290,12 +233,6 @@ export default function PricingPage() {
   const [minOrderQty, setMinOrderQty] = useState(
     minimumConfig?.minimumOrderQuantity ? String(minimumConfig.minimumOrderQuantity) : ""
   );
-  const [newRuleName, setNewRuleName] = useState("");
-  const [newRuleType, setNewRuleType] = useState("GLOBAL_DISCOUNT");
-  const [newRuleDiscount, setNewRuleDiscount] = useState("");
-  const [newRuleMinQty, setNewRuleMinQty] = useState("");
-
-  const globalRule = rules.find((r) => r.type === "GLOBAL_DISCOUNT" && r.active);
 
   // Field-level errors returned from the action
   const actionErrors =
@@ -304,141 +241,22 @@ export default function PricingPage() {
       : null;
 
   return (
-    <Page title="Pricing Rules">
+    <Page title="Pricing">
       <BlockStack gap="500">
-        {!globalRule && (
-          <Banner title="No active global discount" tone="warning">
-            <Text as="p">
-              Set a global discount rule so wholesale customers see discounted prices.
-            </Text>
-          </Banner>
-        )}
-
-        {/* Pricing profiles — the per-segment rates customers point at */}
+        {/* Pricing profiles — per-segment terms; per-variant prices live in the CMS */}
         <Card>
           <BlockStack gap="400">
             <BlockStack gap="100">
               <Text as="h2" variant="headingMd">Pricing Profiles</Text>
               <Text as="p" tone="subdued">
-                Each customer type&apos;s rate. Changing a profile immediately changes
-                pricing for every customer on it (unless they have a per-customer
-                override, set when adding the customer). New segments are new rows here.
+                Per-segment payment terms and minimums. Product prices come from the
+                CMS per variant (cms.cwandt.com → Wholesale) — a variant not entered
+                there is not available for wholesale at all.
               </Text>
             </BlockStack>
             {profiles.map((p) => (
               <ProfileRow key={p.id} profile={p} />
             ))}
-          </BlockStack>
-        </Card>
-
-        {/* Active rules summary */}
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">Current Rules</Text>
-            <Text as="p" tone="subdued">
-              Maximum combined discount is capped at <strong>{maxDiscountPercent}%</strong>.
-              Change this in Settings → Pricing Policy.
-            </Text>
-            <IndexTable
-              resourceName={{ singular: "rule", plural: "rules" }}
-              itemCount={rules.length}
-              headings={[
-                { title: "Name" },
-                { title: "Type" },
-                { title: "Discount" },
-                { title: "Min Qty" },
-                { title: "Status" },
-                { title: "Actions" },
-              ]}
-              selectable={false}
-            >
-              {rules.map((rule, idx) => (
-                <IndexTable.Row id={rule.id} key={rule.id} position={idx}>
-                  <IndexTable.Cell>
-                    <Text as="span" fontWeight="semibold">{rule.name}</Text>
-                  </IndexTable.Cell>
-                  <IndexTable.Cell>
-                    {rule.type.replace(/_/g, " ")}
-                  </IndexTable.Cell>
-                  <IndexTable.Cell>{rule.discountPercent}% off</IndexTable.Cell>
-                  <IndexTable.Cell>{rule.minimumQuantity ?? "—"}</IndexTable.Cell>
-                  <IndexTable.Cell>
-                    <Badge tone={rule.active ? "success" : "info"}>
-                      {rule.active ? "Active" : "Inactive"}
-                    </Badge>
-                  </IndexTable.Cell>
-                  <IndexTable.Cell>
-                    <InlineStack gap="200">
-                      <fetcher.Form method="post">
-                        <input type="hidden" name="intent" value="toggle-rule" />
-                        <input type="hidden" name="ruleId" value={rule.id} />
-                        <Button size="slim" submit>
-                          {rule.active ? "Disable" : "Enable"}
-                        </Button>
-                      </fetcher.Form>
-                      <fetcher.Form method="post">
-                        <input type="hidden" name="intent" value="delete-rule" />
-                        <input type="hidden" name="ruleId" value={rule.id} />
-                        <Button size="slim" tone="critical" submit>Delete</Button>
-                      </fetcher.Form>
-                    </InlineStack>
-                  </IndexTable.Cell>
-                </IndexTable.Row>
-              ))}
-            </IndexTable>
-          </BlockStack>
-        </Card>
-
-        {/* Add new rule */}
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">Add Pricing Rule</Text>
-            <fetcher.Form method="post">
-              <input type="hidden" name="intent" value="create-rule" />
-              <FormLayout>
-                <TextField
-                  autoComplete="off"
-                  label="Rule Name"
-                  name="name"
-                  value={newRuleName}
-                  onChange={setNewRuleName}
-                  error={actionErrors?.name?.[0]}
-                />
-                <Select
-                  label="Type"
-                  name="type"
-                  options={[
-                    { label: "Global Discount (all products)", value: "GLOBAL_DISCOUNT" },
-                    { label: "Volume Tier (quantity threshold)", value: "VOLUME_TIER" },
-                    { label: "Product Override (specific product)", value: "PRODUCT_OVERRIDE" },
-                  ]}
-                  value={newRuleType}
-                  onChange={setNewRuleType}
-                />
-                <TextField
-                  autoComplete="off"
-                  label="Discount Percent"
-                  name="discountPercent"
-                  type="number"
-                  suffix="%"
-                  helpText={`Must be between 0.1% and 100%. Combined global + volume tier is capped at ${maxDiscountPercent}%.`}
-                  value={newRuleDiscount}
-                  onChange={setNewRuleDiscount}
-                  error={actionErrors?.discountPercent?.[0]}
-                />
-                <TextField
-                  autoComplete="off"
-                  label="Minimum Quantity (volume tiers only)"
-                  name="minimumQuantity"
-                  type="number"
-                  helpText="Leave blank for global rules"
-                  value={newRuleMinQty}
-                  onChange={setNewRuleMinQty}
-                  error={actionErrors?.minimumQuantity?.[0]}
-                />
-                <Button submit>Add Rule</Button>
-              </FormLayout>
-            </fetcher.Form>
           </BlockStack>
         </Card>
 

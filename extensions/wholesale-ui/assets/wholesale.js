@@ -27,8 +27,8 @@
   if (window.__whWholesaleInit) return;
   window.__whWholesaleInit = true;
 
-  var SK_STATUS = "wh_status";   // "1" | "0"
-  var SK_PRICES = "wh_prices_";  // + productId → JSON
+  var SK_STATUS = "wh_status";    // "1" | "0"
+  var SK_PRICES = "wh_prices2_";  // + productId → JSON (v2: adds product_wholesale flag)
   var SK_CATALOG = "wh_catalog_"; // + handle → JSON (catalog-card price)
 
   // Catalog-card "Wholesale $X" labels on collection/search/home pages.
@@ -241,8 +241,22 @@
         break;
       }
     }
-    if (!variant) variant = variantsData[0];
-    if (!variant) return;
+    // Only fall back to the first variant when no selection could be read.
+    // A selected variant that is missing from the list is NOT wholesale
+    // (not in the CMS, hidden, or product inactive) — say so instead of
+    // silently showing another variant's price.
+    if (!variant && !selectedVariantId) variant = variantsData[0];
+    if (!variant) {
+      if (priceEl) priceEl.textContent = "—";
+      if (moqEl) moqEl.setAttribute("hidden", "");
+      if (stockEl) { stockEl.textContent = ""; stockEl.className = "wh-price-stock"; }
+      if (noteEl) noteEl.textContent = "This option is not available for wholesale.";
+      var unavailForm = block.querySelector(".wh-backorder-form");
+      if (unavailForm) unavailForm.setAttribute("hidden", "");
+      block.removeAttribute("hidden");
+      if (skeleton) skeleton.setAttribute("hidden", "");
+      return;
+    }
 
     if (priceEl) priceEl.textContent = formatMoney(variant.wh_price);
 
@@ -523,10 +537,19 @@
       if (qtyInput) qty = parseInt(qtyInput.value, 10) || 1;
 
       fetchWholesalePrices(productId, qty, function (err, data) {
+        var skeletons = block.querySelectorAll(".wh-price-skeleton");
+
         if (err || !data || !data.wholesale) {
-          block.querySelectorAll(".wh-price-skeleton").forEach(function (el) {
-            el.setAttribute("hidden", "");
-          });
+          skeletons.forEach(function (el) { el.setAttribute("hidden", ""); });
+          return;
+        }
+
+        // Product is not in the wholesale program: hide the wholesale UI and
+        // reveal the retail price the price block's CSS pre-emptively hid —
+        // otherwise the customer sees no price at all on retail-only products.
+        if (data.product_wholesale === false || !data.variants || data.variants.length === 0) {
+          skeletons.forEach(function (el) { el.setAttribute("hidden", ""); });
+          document.documentElement.classList.add("wh-show-retail");
           return;
         }
 

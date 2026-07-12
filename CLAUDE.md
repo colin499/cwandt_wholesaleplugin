@@ -106,6 +106,37 @@ Rules that follow (do not regress these):
   **Must be run once after installing on the live store** — webhooks only
   cover events from install-time forward.
 
+## Wholesale Pricing Architecture (Phase A, 2026-07-12)
+
+**Per-variant CMS prices are the only wholesale prices.** A variant is
+available for wholesale iff (all three):
+
+1. it has a row in the CMS `WholesaleVariant` table (synced into
+   `CmsVariantCache`; presence = curated into the program),
+2. it is NOT listed in the product's `custom.wholesale_hidden_variants`
+   metafield (same projection the live theme's variant picker reads),
+3. its Shopify product status is ACTIVE.
+
+Resolution lives in `resolveVariantWholesale()` / `parseHiddenVariantIds()`
+in `app/lib/cms-client.server.ts` and is applied by every App Proxy endpoint
+(prices, catalog-prices, linesheet-data, backorder). **There is no fallback
+price** — not in the CMS means not wholesale: no price shown, no card label,
+not on the line sheet, backorder rejected. On the PDP, `wholesale.js` reveals
+the theme's retail price (`html.wh-show-retail`) when a product isn't in the
+program, since the price block's CSS pre-emptively hides retail for wholesale
+customers.
+
+The percentage-discount system (GLOBAL_DISCOUNT / VOLUME_TIER /
+PRODUCT_OVERRIDE PricingRules, maxDiscountPercent stacking cap) is **retired**
+— removed from code and admin UI. The `PricingRule` table and
+`WholesaleSettings.maxDiscountPercent` column still exist but are read by
+nothing; drop in a future cleanup migration. `PricingProfile` rows carry
+per-segment payment terms / minimums and the customer-level discount metadata
+used for order records — not storefront prices.
+
+The program is managed in the CMS: cms.cwandt.com → Wholesale (list, add
+products with per-variant prices/MOQ at the 50%/30% tier presets, remove).
+
 ## Key Decisions
 
 | Decision | Choice | Why |
@@ -141,7 +172,8 @@ app/
                                        Import & Reconcile (backfill) card
     app.distributors.tsx             — Redirect → /app/customers (merged 2026-07-10)
     app.applications.tsx             — Application review (approve / reject) — approve calls enrollCustomer
-    app.pricing.tsx                  — Pricing profiles + pricing rules + order minimums
+    app.pricing.tsx                  — Pricing profiles (terms/minimums) + order minimums;
+                                       product prices live in the CMS, not here
     app-proxy.$.tsx                  — App Proxy: /apps/wholesale/prices, /order-minimums
     webhooks.tsx                     — Shopify webhook handler (customer webhooks reconcile, never enroll)
 

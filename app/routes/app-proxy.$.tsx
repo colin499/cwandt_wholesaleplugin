@@ -23,28 +23,34 @@ import { json } from "@remix-run/node";
 import { authenticate, unauthenticated } from "../shopify.server";
 import {
   getWholesaleSession,
-  getActiveGlobalDiscount,
-  applyVolumeTier,
-  calculateWholesalePrice,
   getEffectiveOrderMinimum,
 } from "../lib/wholesale-customer.server";
 import {
   getCmsVariantMap,
   maybeRefreshCmsCache,
+  parseHiddenVariantIds,
+  resolveVariantWholesale,
 } from "../lib/cms-client.server";
 import { db } from "../db.server";
 
-// Admin API query — fetches products for the line sheet (paginated).
+// Wholesale availability (all endpoints): a variant is wholesale iff it has a
+// CMS row AND is not in the product's custom.wholesale_hidden_variants
+// metafield AND the product is ACTIVE. No fallback pricing — not in the CMS
+// means not wholesale. See resolveVariantWholesale in cms-client.server.ts.
+
+// Admin API query — fetches active products for the line sheet (paginated).
 const LINESHEET_QUERY = `
   query GetLinesheetProducts($first: Int!, $after: String) {
     shop { currencyCode }
-    products(first: $first, after: $after) {
+    products(first: $first, after: $after, query: "status:active") {
       edges {
         node {
           id
           title
           handle
+          status
           featuredImage { url altText }
+          hiddenVariants: metafield(namespace: "custom", key: "wholesale_hidden_variants") { value }
           collections(first: 1) {
             nodes { title handle }
           }
@@ -75,6 +81,8 @@ const PRODUCT_QUERY = `
       id
       title
       handle
+      status
+      hiddenVariants: metafield(namespace: "custom", key: "wholesale_hidden_variants") { value }
       variants(first: 100) {
         nodes {
           id
@@ -106,9 +114,26 @@ const CATALOG_QUERY = `
       nodes {
         id
         handle
+        status
+        hiddenVariants: metafield(namespace: "custom", key: "wholesale_hidden_variants") { value }
         variants(first: 100) {
           nodes { id price availableForSale }
         }
+      }
+    }
+  }
+`;
+
+// Admin API query — validates a single variant for backorder creation.
+const VARIANT_QUERY = `
+  query GetVariantForBackorder($id: ID!) {
+    productVariant(id: $id) {
+      id
+      price
+      product {
+        id
+        status
+        hiddenVariants: metafield(namespace: "custom", key: "wholesale_hidden_variants") { value }
       }
     }
   }
@@ -170,10 +195,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const shop = url.searchParams.get("shop");
     if (!shop) return json({ error: "Missing shop param" }, { status: 400 });
 
-    const baseDiscount = await getActiveGlobalDiscount(session.discountPercent);
-    const effectiveDiscount = await applyVolumeTier(baseDiscount, 1);
-    const isDistributor = session.customerType === "DISTRIBUTOR";
-
     // Shopify product query syntax: handle:a OR handle:b ...
     const q = handles.map((h) => `handle:${h}`).join(" OR ");
 
@@ -197,21 +218,29 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     );
     const cmsMap = await getCmsVariantMap(allVariantIds);
 
+    // Only wholesale-available variants contribute; products with none are
+    // omitted from the response and get no card label (retail-only).
     const products: Record<string, any> = {};
     for (const p of nodes) {
+      const hiddenIds = parseHiddenVariantIds(p.hiddenVariants?.value);
+      const productActive = p.status === "ACTIVE";
       let whMin = Infinity;
       let whMax = -Infinity;
       let retailMin = Infinity;
       for (const v of p.variants.nodes) {
+        const variantId = String(v.id.split("/").pop());
         const retailCents = Math.round(parseFloat(v.price) * 100);
-        const cms = cmsMap.get(String(v.id.split("/").pop()));
-        const wh = cms
-          ? isDistributor
-            ? cms.distributorPriceCents
-            : cms.wholesalePriceCents
-          : calculateWholesalePrice(retailCents, effectiveDiscount);
-        if (wh < whMin) whMin = wh;
-        if (wh > whMax) whMax = wh;
+        const state = resolveVariantWholesale({
+          cms: cmsMap.get(variantId),
+          variantId,
+          hiddenVariantIds: hiddenIds,
+          productActive,
+          customerType: session.customerType,
+          retailCents,
+        });
+        if (!state.available) continue;
+        if (state.priceCents < whMin) whMin = state.priceCents;
+        if (state.priceCents > whMax) whMax = state.priceCents;
         if (retailCents < retailMin) retailMin = retailCents;
       }
       if (whMin === Infinity) continue;
@@ -242,11 +271,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const session = await getWholesaleSession(shopifyCustomerId);
     if (!session) return notWholesale();
 
-    const baseDiscount = await getActiveGlobalDiscount(session.discountPercent);
-    // Line sheet shows base wholesale price — volume tier discounts apply at order time
-    const effectiveDiscount = await applyVolumeTier(baseDiscount, 1);
-
-    // Paginate through ALL published products — no artificial cap.
+    // Paginate through ALL active products — no artificial cap.
     // Shopify's API guarantees endCursor is defined whenever hasNextPage is true.
     // `shop` is in the HMAC-signed query params — safe after appProxy verification.
     const shop = url.searchParams.get("shop");
@@ -286,13 +311,44 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       p.variants.nodes.map((v: any) => parseInt(v.id.split("/").pop(), 10))
     );
     const cmsMap = await getCmsVariantMap(allVariantIds);
-    const isDistributor = session.customerType === "DISTRIBUTOR";
 
-    // Group products by their first collection
+    // Group products by their first collection. Only wholesale-available
+    // variants appear; products with none are left off the line sheet.
     const collectionOrder: string[] = [];
     const collectionMap: Record<string, { title: string; products: any[] }> = {};
 
     for (const product of allNodes) {
+      const hiddenIds = parseHiddenVariantIds(product.hiddenVariants?.value);
+      const productActive = product.status === "ACTIVE";
+
+      const variants = product.variants.nodes.flatMap((v: any) => {
+        const variantId = parseInt(v.id.split("/").pop(), 10);
+        const retailCents = Math.round(parseFloat(v.price) * 100);
+        const state = resolveVariantWholesale({
+          cms: cmsMap.get(String(variantId)),
+          variantId,
+          hiddenVariantIds: hiddenIds,
+          productActive,
+          customerType: session.customerType,
+          retailCents,
+        });
+        if (!state.available) return [];
+
+        return [{
+          id: variantId,
+          title: v.title,
+          sku: v.sku ?? "",
+          retail_price: retailCents,
+          wh_price: state.priceCents,
+          currency_code: shopCurrency,
+          available: v.availableForSale,
+          in_stock: v.inventoryQuantity ?? 0,
+          moq: state.moq,
+        }];
+      });
+
+      if (variants.length === 0) continue;
+
       const col = product.collections?.nodes?.[0];
       const key = col?.handle ?? "__uncategorized__";
       const title = col?.title ?? "Other";
@@ -301,31 +357,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         collectionMap[key] = { title, products: [] };
         collectionOrder.push(key);
       }
-
-      const variants = product.variants.nodes.map((v: any) => {
-        const variantId = parseInt(v.id.split("/").pop(), 10);
-        const retailCents = Math.round(parseFloat(v.price) * 100);
-        const cms = cmsMap.get(String(variantId));
-
-        let whPrice: number;
-        if (cms) {
-          whPrice = isDistributor ? cms.distributorPriceCents : cms.wholesalePriceCents;
-        } else {
-          whPrice = calculateWholesalePrice(retailCents, effectiveDiscount);
-        }
-
-        return {
-          id: variantId,
-          title: v.title,
-          sku: v.sku ?? "",
-          retail_price: retailCents,
-          wh_price: whPrice,
-          currency_code: shopCurrency,
-          available: v.availableForSale,
-          in_stock: v.inventoryQuantity ?? 0,
-          moq: cms?.moq ?? 1,
-        };
-      });
 
       collectionMap[key].products.push({
         id: parseInt(product.id.split("/").pop(), 10),
@@ -338,7 +369,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
     return proxyJson({
       wholesale: true,
-      discount_percent: effectiveDiscount,
       collections: collectionOrder.map((k) => collectionMap[k]),
     });
   }
@@ -347,7 +377,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   if (subpath === "prices") {
     const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");
     const productId = url.searchParams.get("product_id");
-    const qty = parseInt(url.searchParams.get("qty") ?? "1", 10) || 1;
 
     if (!productId) {
       return json({ error: "product_id is required" }, { status: 400 });
@@ -355,9 +384,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
     const session = await getWholesaleSession(shopifyCustomerId);
     if (!session) return notWholesale();
-
-    const baseDiscount = await getActiveGlobalDiscount(session.discountPercent);
-    const effectiveDiscount = await applyVolumeTier(baseDiscount, qty);
 
     // `shop` is in the HMAC-signed query params — safe after appProxy verification.
     const shop = url.searchParams.get("shop");
@@ -387,43 +413,48 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       parseInt(v.id.split("/").pop(), 10)
     );
     const cmsMap = await getCmsVariantMap(variantIds);
-    const isDistributor = session.customerType === "DISTRIBUTOR";
+    const hiddenIds = parseHiddenVariantIds(productData.hiddenVariants?.value);
+    const productActive = productData.status === "ACTIVE";
 
-    const variants = productData.variants.nodes.map((v: any) => {
+    // Only wholesale-available variants are returned. The storefront JS shows
+    // a "not available for wholesale" state for any selected variant missing
+    // from this list, and reveals retail pricing when the list is empty
+    // (product_wholesale: false).
+    const variants = productData.variants.nodes.flatMap((v: any) => {
       const retailCents = Math.round(parseFloat(v.price) * 100);
-      const variantNumericId = v.id.split("/").pop();
-      const variantId = parseInt(variantNumericId, 10);
-      const cms = cmsMap.get(String(variantId));
+      const variantId = parseInt(v.id.split("/").pop(), 10);
+      const state = resolveVariantWholesale({
+        cms: cmsMap.get(String(variantId)),
+        variantId,
+        hiddenVariantIds: hiddenIds,
+        productActive,
+        customerType: session.customerType,
+        retailCents,
+      });
+      if (!state.available) return [];
 
-      let whPrice: number;
-      if (cms) {
-        whPrice = isDistributor ? cms.distributorPriceCents : cms.wholesalePriceCents;
-      } else {
-        whPrice = calculateWholesalePrice(retailCents, effectiveDiscount);
-      }
-
-      return {
+      return [{
         id: variantId,
         gid: v.id,
         title: v.title,
         sku: v.sku ?? "",
         retail_price: retailCents,
-        wh_price: whPrice,
-        discount_percent: effectiveDiscount,
+        wh_price: state.priceCents,
+        discount_percent: state.discountPercent,
         available: v.availableForSale,
         in_stock: v.inventoryQuantity ?? 0,
-        moq: cms?.moq ?? 1,
+        moq: state.moq,
         selected_options: v.selectedOptions,
         image_url: v.image?.url ?? null,
         currency_code: shopCurrency,
-      };
+      }];
     });
 
     return proxyJson({
       wholesale: true,
+      product_wholesale: variants.length > 0,
       product_id: productId,
       product_title: productData.title,
-      discount_percent: effectiveDiscount,
       variants,
     });
   }
@@ -464,15 +495,54 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return json({ error: "variant_id is required" }, { status: 400 });
   }
 
-  const baseDiscount = await getActiveGlobalDiscount(wholesaleSession.discountPercent);
-  const effectiveDiscount = await applyVolumeTier(baseDiscount, quantity);
-
   // Admin API client — loads the shop's offline session from Prisma storage.
   // This works because the app is installed on the shop (App Proxy only runs when installed).
   const { admin } = await unauthenticated.admin(shop);
 
   const variantGid = `gid://shopify/ProductVariant/${variantId}`;
   const customerGid = `gid://shopify/Customer/${wholesaleSession.shopifyCustomerId}`;
+
+  // Validate wholesale availability and resolve the CMS price for this variant.
+  // A variant outside the program cannot be backordered at wholesale terms.
+  let variantData: any;
+  try {
+    const vRes = await admin.graphql(VARIANT_QUERY, { variables: { id: variantGid } });
+    const vBody = await vRes.json();
+    variantData = vBody.data?.productVariant;
+  } catch (err) {
+    console.error("[app-proxy/backorder] Variant lookup failed:", err);
+    return json({ error: "Failed to look up variant" }, { status: 502 });
+  }
+  if (!variantData) {
+    return json({ error: "Variant not found" }, { status: 404 });
+  }
+
+  const retailCents = Math.round(parseFloat(variantData.price) * 100);
+  const cmsMap = await getCmsVariantMap([variantId]);
+  const state = resolveVariantWholesale({
+    cms: cmsMap.get(String(variantId)),
+    variantId,
+    hiddenVariantIds: parseHiddenVariantIds(variantData.product?.hiddenVariants?.value),
+    productActive: variantData.product?.status === "ACTIVE",
+    customerType: wholesaleSession.customerType,
+    retailCents,
+  });
+  if (!state.available) {
+    return json({ error: "This item is not available for wholesale." }, { status: 403 });
+  }
+  if (quantity < state.moq) {
+    return json(
+      { error: `Minimum order quantity for this item is ${state.moq}.` },
+      { status: 422 }
+    );
+  }
+
+  // Draft orders price via a per-line discount off retail; derive the exact
+  // percentage that lands on the CMS wholesale price.
+  const effectiveDiscount =
+    retailCents > 0
+      ? Math.round((1 - state.priceCents / retailCents) * 10000) / 100
+      : 0;
 
   let draftOrder: any;
   try {
