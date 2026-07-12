@@ -117,7 +117,7 @@ const CATALOG_QUERY = `
         status
         hiddenVariants: metafield(namespace: "custom", key: "wholesale_hidden_variants") { value }
         variants(first: 100) {
-          nodes { id price availableForSale }
+          nodes { id sku price availableForSale }
         }
       }
     }
@@ -129,6 +129,7 @@ const VARIANT_QUERY = `
   query GetVariantForBackorder($id: ID!) {
     productVariant(id: $id) {
       id
+      sku
       price
       product {
         id
@@ -214,7 +215,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }
 
     const allVariantIds = nodes.flatMap((p: any) =>
-      p.variants.nodes.map((v: any) => parseInt(v.id.split("/").pop(), 10))
+      p.variants.nodes.map((v: any) => ({
+        id: parseInt(v.id.split("/").pop(), 10),
+        sku: v.sku,
+      }))
     );
     const cmsMap = await getCmsVariantMap(allVariantIds);
 
@@ -308,7 +312,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
     // Bulk-fetch CMS pricing/MOQ for all variants in one DB query
     const allVariantIds = allNodes.flatMap((p: any) =>
-      p.variants.nodes.map((v: any) => parseInt(v.id.split("/").pop(), 10))
+      p.variants.nodes.map((v: any) => ({
+        id: parseInt(v.id.split("/").pop(), 10),
+        sku: v.sku,
+      }))
     );
     const cmsMap = await getCmsVariantMap(allVariantIds);
 
@@ -409,9 +416,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       return json({ error: "Product not found" }, { status: 404 });
     }
 
-    const variantIds = productData.variants.nodes.map((v: any) =>
-      parseInt(v.id.split("/").pop(), 10)
-    );
+    const variantIds = productData.variants.nodes.map((v: any) => ({
+      id: parseInt(v.id.split("/").pop(), 10),
+      sku: v.sku,
+    }));
     const cmsMap = await getCmsVariantMap(variantIds);
     const hiddenIds = parseHiddenVariantIds(productData.hiddenVariants?.value);
     const productActive = productData.status === "ACTIVE";
@@ -518,7 +526,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 
   const retailCents = Math.round(parseFloat(variantData.price) * 100);
-  const cmsMap = await getCmsVariantMap([variantId]);
+  const cmsMap = await getCmsVariantMap([{ id: variantId, sku: variantData.sku }]);
   const state = resolveVariantWholesale({
     cms: cmsMap.get(String(variantId)),
     variantId,

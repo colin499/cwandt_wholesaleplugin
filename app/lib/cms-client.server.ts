@@ -137,35 +137,66 @@ export type CmsCachedVariant = {
   moq: number;
 };
 
+export type CmsLookupEntry = { id: number | string; sku?: string | null };
+
 /**
- * Batch-fetch CMS data for a list of numeric Shopify variant IDs.
- * Returns a Map keyed by variant ID string. Missing variants (not in CMS) are
- * absent from the Map — callers should fall back to calculated prices.
+ * Batch-fetch CMS data for a list of variants. Returns a Map keyed by the
+ * variant ID string that was ASKED FOR. Variants not in the CMS are absent
+ * from the Map — after Phase A that means "not available for wholesale".
+ *
+ * Matching: variant ID first (the CMS stores LIVE-store variant IDs, so this
+ * is the normal path in production), then SKU as a fallback for entries that
+ * carry one. The fallback exists because the dev store's products are copies
+ * with different IDs but the same SKUs; it is harmless on the live store,
+ * where the ID match always wins.
  */
 export async function getCmsVariantMap(
-  shopifyVariantIds: (number | string)[]
+  entries: (number | string | CmsLookupEntry)[]
 ): Promise<Map<string, CmsCachedVariant>> {
-  if (shopifyVariantIds.length === 0) return new Map();
+  if (entries.length === 0) return new Map();
 
-  const ids = shopifyVariantIds.map(String);
-  const rows = await db.cmsVariantCache.findMany({
+  const normalized: CmsLookupEntry[] = entries.map((e) =>
+    typeof e === "object" ? e : { id: e }
+  );
+  const ids = normalized.map((e) => String(e.id));
+
+  const select = {
+    shopifyVariantId: true,
+    sku: true,
+    wholesalePriceCents: true,
+    distributorPriceCents: true,
+    moq: true,
+  } as const;
+
+  const idRows = await db.cmsVariantCache.findMany({
     where: { shopifyVariantId: { in: ids } },
-    select: {
-      shopifyVariantId: true,
-      wholesalePriceCents: true,
-      distributorPriceCents: true,
-      moq: true,
-    },
+    select,
   });
 
   const map = new Map<string, CmsCachedVariant>();
-  for (const row of rows) {
-    map.set(row.shopifyVariantId, {
-      wholesalePriceCents: row.wholesalePriceCents,
-      distributorPriceCents: row.distributorPriceCents,
-      moq: row.moq,
+  const toCached = (row: (typeof idRows)[number]): CmsCachedVariant => ({
+    wholesalePriceCents: row.wholesalePriceCents,
+    distributorPriceCents: row.distributorPriceCents,
+    moq: row.moq,
+  });
+  for (const row of idRows) map.set(row.shopifyVariantId, toCached(row));
+
+  // SKU fallback for entries the ID lookup missed.
+  const missing = normalized.filter(
+    (e) => !map.has(String(e.id)) && e.sku && e.sku.trim() !== ""
+  );
+  if (missing.length > 0) {
+    const skuRows = await db.cmsVariantCache.findMany({
+      where: { sku: { in: missing.map((e) => e.sku!.trim()) } },
+      select,
     });
+    const bySku = new Map(skuRows.map((r) => [r.sku, r]));
+    for (const e of missing) {
+      const row = bySku.get(e.sku!.trim());
+      if (row) map.set(String(e.id), toCached(row));
+    }
   }
+
   return map;
 }
 
