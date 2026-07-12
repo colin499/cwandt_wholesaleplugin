@@ -87,6 +87,8 @@ export async function syncCmsDataToDb(): Promise<{ count: number; error?: string
   }
 
   if (variants.length === 0) {
+    // Deliberately do NOT prune on an empty response — an empty payload is
+    // far more likely a CMS problem than a real "everything left wholesale".
     return { count: 0 };
   }
 
@@ -107,6 +109,18 @@ export async function syncCmsDataToDb(): Promise<{ count: number; error?: string
       });
     })
   );
+
+  // Prune rows no longer in the CMS response (removed from the program or
+  // newly hidden). Without this, a variant removed in the CMS stayed
+  // wholesale in the app forever — the cache only ever grew.
+  const pruned = await db.cmsVariantCache.deleteMany({
+    where: {
+      shopifyVariantId: { notIn: variants.map((v) => String(v.shopify_variant_id)) },
+    },
+  });
+  if (pruned.count > 0) {
+    console.log(`[cms-client] Pruned ${pruned.count} variants no longer in the CMS response`);
+  }
 
   await db.cmsSyncState.upsert({
     where: { id: "singleton" },
