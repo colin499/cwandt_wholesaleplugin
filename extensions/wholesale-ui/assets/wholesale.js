@@ -240,7 +240,7 @@
 
   function applyVariantPrice(variantsData, selectedVariantId, productForm) {
     var block    = document.getElementById("wh-price-block");
-    var skeleton = document.querySelector(".wh-price-skeleton");
+    var skeleton = document.querySelector(".wh-price-skeleton"); // sibling of the block, not a child
     var priceEl  = document.getElementById("wh-price-amount");
     var moqEl    = document.getElementById("wh-price-moq");
     var stockEl  = document.getElementById("wh-price-stock");
@@ -581,7 +581,10 @@
       if (qtyInput) qty = parseInt(qtyInput.value, 10) || 1;
 
       fetchWholesalePrices(productId, qty, function (err, data) {
-        var skeletons = block.querySelectorAll(".wh-price-skeleton");
+        // The skeleton is a SIBLING of the price block (it shows while the
+        // block is hidden), so it must be queried document-wide — a
+        // block-scoped query finds nothing and leaves it pulsing forever.
+        var skeletons = document.querySelectorAll(".wh-price-skeleton");
 
         if (err || !data || !data.wholesale) {
           skeletons.forEach(function (el) { el.setAttribute("hidden", ""); });
