@@ -145,13 +145,25 @@
       body: body.toString(),
     })
       .then(function (r) {
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return r.json();
+        // Read the body even on error statuses — the server sends specific,
+        // user-facing reasons (e.g. the MOQ minimum) in { error }.
+        return r
+          .json()
+          .catch(function () { throw new Error("HTTP " + r.status); })
+          .then(function (data) {
+            if (!r.ok) {
+              var e = new Error((data && data.error) || "HTTP " + r.status);
+              e.userFacing = !!(data && data.error);
+              throw e;
+            }
+            return data;
+          });
       })
       .then(function (data) {
         if (data && data.ok) {
           btn.setAttribute("hidden", "");
           if (msgEl) {
+            msgEl.textContent = ""; // clear any previous error before writing
             msgEl.className = "wh-backorder-msg wh-backorder-msg--success";
             msgEl.removeAttribute("hidden");
             var successText = document.createTextNode(
@@ -167,14 +179,16 @@
             }
           }
         } else {
-          throw new Error(data.error || "Backorder failed");
+          throw new Error((data && data.error) || "Backorder failed");
         }
       })
       .catch(function (err) {
         btn.disabled = false;
         btn.textContent = "Place Backorder";
         if (msgEl) {
-          msgEl.textContent = "Could not place backorder. Please contact us.";
+          msgEl.textContent = err && err.userFacing
+            ? err.message
+            : "Could not place backorder. Please contact us.";
           msgEl.className = "wh-backorder-msg wh-backorder-msg--error";
           msgEl.removeAttribute("hidden");
         }
