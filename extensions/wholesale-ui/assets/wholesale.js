@@ -269,6 +269,13 @@
       }
     }
 
+    // Enforce the MOQ on the theme's quantity input: floor at the MOQ and
+    // pre-fill it. (Exempt customers receive moq: 1 from the server, so this
+    // self-disables for them.) The cart page can still lower quantities —
+    // this is the PDP path only; hard enforcement lives where the app creates
+    // orders (backorder, orderable linesheet).
+    applyMoqToQuantityInput(productForm, variant.moq);
+
     var isOutOfStock = !variant.available || variant.in_stock <= 0;
 
     if (stockEl) {
@@ -329,6 +336,29 @@
 
     block.removeAttribute("hidden");
     if (skeleton) skeleton.setAttribute("hidden", "");
+  }
+
+  /* -------------------------------------------------------------------------
+     6b. MOQ → quantity input
+     ---------------------------------------------------------------------- */
+
+  function applyMoqToQuantityInput(productForm, moq) {
+    var scope = productForm || document;
+    var qtyInput = scope.querySelector('input[name="quantity"]');
+    if (!qtyInput) return;
+
+    if (moq > 1) {
+      qtyInput.min = String(moq);
+      var current = parseInt(qtyInput.value, 10) || 0;
+      if (current < moq) {
+        qtyInput.value = String(moq);
+        // Let theme quantity widgets (steppers, cart estimates) react.
+        qtyInput.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    } else {
+      // Variant without MOQ (or exempt customer): restore the theme default.
+      if (qtyInput.min && parseInt(qtyInput.min, 10) > 1) qtyInput.min = "1";
+    }
   }
 
   /* -------------------------------------------------------------------------

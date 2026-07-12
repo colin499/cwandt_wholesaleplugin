@@ -350,7 +350,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           currency_code: shopCurrency,
           available: v.availableForSale,
           in_stock: v.inventoryQuantity ?? 0,
-          moq: state.moq,
+          moq: session.exemptFromMoq ? 1 : state.moq,
         }];
       });
 
@@ -451,7 +451,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         discount_percent: state.discountPercent,
         available: v.availableForSale,
         in_stock: v.inventoryQuantity ?? 0,
-        moq: state.moq,
+        moq: session.exemptFromMoq ? 1 : state.moq,
         selected_options: v.selectedOptions,
         image_url: v.image?.url ?? null,
         currency_code: shopCurrency,
@@ -538,7 +538,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   if (!state.available) {
     return json({ error: "This item is not available for wholesale." }, { status: 403 });
   }
-  if (quantity < state.moq) {
+  if (!wholesaleSession.exemptFromMoq && quantity < state.moq) {
     return json(
       { error: `Minimum order quantity for this item is ${state.moq}.` },
       { status: 422 }

@@ -15,6 +15,7 @@ import {
   TextField,
   Banner,
   Tabs,
+  Checkbox,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
@@ -59,6 +60,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     customerType: c.customerType,
     paymentTerms: c.paymentTerms,
     minimumOrderValue: c.minimumOrderValue,
+    exemptFromMoq: c.exemptFromMoq,
     effectiveDiscount: resolveDiscountPercent(c),
     hasDiscountOverride: c.discountPercent !== null,
     profileName: c.pricingProfile?.name ?? null,
@@ -204,6 +206,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
+  if (intent === "update_moq_exempt") {
+    await db.wholesaleCustomer.update({
+      where: { id: customerId },
+      data: { exemptFromMoq: String(formData.get("exemptFromMoq")) === "true" },
+    });
+  }
+
   if (intent === "update_minimum") {
     const raw = String(formData.get("minimumOrderValue") ?? "").trim();
     const parsed = raw === "" ? null : parseFloat(raw);
@@ -237,6 +246,7 @@ type CustomerRowData = {
   customerType: string;
   paymentTerms: string;
   minimumOrderValue: number | null;
+  exemptFromMoq: boolean;
   effectiveDiscount: number;
   hasDiscountOverride: boolean;
   profileName: string | null;
@@ -246,6 +256,8 @@ function CustomerRow({ customer, index }: { customer: CustomerRowData; index: nu
   const statusFetcher = useFetcher();
   const typeFetcher = useFetcher();
   const minFetcher = useFetcher();
+  const moqFetcher = useFetcher();
+  const [moqExempt, setMoqExempt] = useState(customer.exemptFromMoq);
   const [selectedStatus, setSelectedStatus] = useState(customer.status);
   const [selectedType, setSelectedType] = useState(customer.customerType);
   const [minValue, setMinValue] = useState(
@@ -312,6 +324,21 @@ function CustomerRow({ customer, index }: { customer: CustomerRowData; index: nu
             <Button submit size="slim" loading={minFetcher.state !== "idle"}>Save</Button>
           </BlockStack>
         </minFetcher.Form>
+      </IndexTable.Cell>
+      <IndexTable.Cell>
+        <Checkbox
+          label=""
+          labelHidden
+          checked={moqExempt}
+          disabled={moqFetcher.state !== "idle"}
+          onChange={(checked) => {
+            setMoqExempt(checked);
+            moqFetcher.submit(
+              { intent: "update_moq_exempt", customerId: customer.id, exemptFromMoq: String(checked) },
+              { method: "post" }
+            );
+          }}
+        />
       </IndexTable.Cell>
       <IndexTable.Cell>
         <statusFetcher.Form method="post">
@@ -600,6 +627,7 @@ export default function CustomersPage() {
                 { title: "Discount" },
                 { title: "Terms" },
                 { title: "Min. Order" },
+                { title: "MOQ Exempt" },
                 { title: "Actions" },
               ]}
               selectable={false}

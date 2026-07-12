@@ -19,6 +19,7 @@ export type WholesaleSession = {
   status: string;
   customerType: string;          // "WHOLESALE" | "DISTRIBUTOR" | "B2B"
   minimumOrderValue: number | null; // resolved override (customer ?? profile); null = use global
+  exemptFromMoq: boolean;        // per-customer: variant MOQs are ignored everywhere
 };
 
 /**
@@ -43,6 +44,7 @@ export async function getWholesaleSession(
       status: true,
       customerType: true,
       minimumOrderValue: true,
+      exemptFromMoq: true,
       pricingProfile: {
         select: { discountPercent: true, minimumOrderValue: true },
       },
@@ -60,6 +62,7 @@ export async function getWholesaleSession(
     customerType: customer.customerType,
     minimumOrderValue:
       customer.minimumOrderValue ?? customer.pricingProfile?.minimumOrderValue ?? null,
+    exemptFromMoq: customer.exemptFromMoq,
   };
 }
 

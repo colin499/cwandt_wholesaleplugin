@@ -79,6 +79,7 @@ model WholesaleCustomer {
   discountPercent   Float?
   paymentTerms      String   @default("CREDIT_CARD")
   minimumOrderValue Float?
+  exemptFromMoq     Boolean  @default(false) // per-customer: ignore variant MOQs everywhere
   approvedAt        DateTime?
   approvedBy        String?
   notes             String?
