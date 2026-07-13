@@ -110,6 +110,21 @@ migration). PRODUCT_OVERRIDE was never read by anything, for what it's worth.
 - An orderable storefront linesheet (quantities → draft order w/ net terms),
   eventually replacing the Google Sheet for buyers.
 
+## Data archaeology + cleanup plan (audit tool: `manage.py audit_wholesale`)
+
+A read-only CMS audit command now exists for pre-go-live data checks. Its
+first production run (2026-07-13, 98 findings) surfaced, among other things,
+the **`W-*` legacy wholesale catalog**: ~77 hidden live-store products
+(SKUs `W-…`, titles ending `*`, CMS status `wholesale`) implementing the
+pre-BSS wholesale program as separate pack-size products. Verified: nothing
+in the new system references them (0 in the wholesale table, 0 in the app
+cache). Cleanup is deferred until after the build; their pack-size SKU
+suffixes (`-2/-5/-10/-25`) are the design input for real MOQs and the pack
+feature. **Cutover checklist gains: archive the `W-*` products on the live
+store + retire them in the CMS.** Also pending review: 14 wholesale rows on
+retired variants, and 8 duplicate-SKU groups (the KUYA pattern — a hidden
+retired twin plus a visible stocked twin sharing one SKU).
+
 ## Open items where your input is wanted
 
 1. **Distributor rate** — still 50% like wholesale; when decided, it's an edit
