@@ -17,7 +17,7 @@
   {% comment %} html2pdf.js loaded from CDN for PDF export {% endcomment %}
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" defer></script>
 
-  <div class="wh-linesheet" data-bundle-sizes="{{ block.settings.bundle_sizes | default: '6,12,24' }}">
+  <div class="wh-linesheet">
 
     <div class="wh-ls-header wh-no-print">
       <div class="wh-ls-header-text">
@@ -25,8 +25,8 @@
         <p class="wh-ls-subtitle">{{ block.settings.company_name | default: 'CW&T' }} &mdash; wholesale pricing</p>
       </div>
       <div class="wh-ls-actions">
-        <span id="wh-ls-cart-count" class="wh-ls-cart-count" hidden></span>
-        <button type="button" class="wh-ls-btn wh-ls-btn--cart" id="wh-ls-add-to-cart">Add to Cart</button>
+        <span id="wh-ls-summary" class="wh-ls-cart-count" hidden></span>
+        <button type="button" class="wh-ls-btn wh-ls-btn--cart" id="wh-ls-submit-order">Submit Wholesale Order</button>
         <button type="button" class="wh-ls-btn" id="wh-ls-print">Print</button>
         <button type="button" class="wh-ls-btn" id="wh-ls-download">Download PDF</button>
       </div>
@@ -37,6 +37,8 @@
       <p class="wh-ls-print-company">{{ block.settings.company_name | default: 'CW&T' }}</p>
       <p class="wh-ls-print-title">Wholesale Line Sheet</p>
     </div>
+
+    <div id="wh-ls-order-result" class="wh-ls-order-result" role="status" aria-live="polite" hidden></div>
 
     <div id="wh-linesheet-loading" class="wh-ls-loading" aria-live="polite">
       Loading products&hellip;
@@ -72,13 +74,6 @@
       "id": "company_name",
       "label": "Company Name (shown on PDF)",
       "default": "CW&T"
-    },
-    {
-      "type": "text",
-      "id": "bundle_sizes",
-      "label": "Bundle Sizes (comma-separated)",
-      "default": "6,12,24",
-      "info": "Snap-to quantities for the Qty column, e.g. 6,12,24. Customers pick from these increments when ordering."
     }
   ],
   "templates": ["page"]

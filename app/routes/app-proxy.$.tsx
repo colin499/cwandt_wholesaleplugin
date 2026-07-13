@@ -478,6 +478,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const url = new URL(request.url);
   const subpath = (params["*"] ?? "").replace(/^\//, "");
 
+  if (subpath === "linesheet-order") {
+    return handleLinesheetOrder(request, url);
+  }
+
   if (subpath !== "backorder") {
     return json({ error: "Not found" }, { status: 404 });
   }
@@ -624,3 +628,217 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     invoice_url: draftOrder.invoiceUrl,
   });
 };
+
+// ── POST /apps/wholesale/linesheet-order ─────────────────────────────────────
+// The wholesale ORDERING path: quantities from the line sheet become ONE
+// draft order at exact CMS wholesale prices, attached to the customer (so
+// Shopify's native taxExempt applies), tagged with the customer's payment
+// terms. The theme cart is NOT used — it checks out at retail. Draft orders
+// also don't reserve inventory, so out-of-stock lines are fine (backorders
+// ride along in the same order).
+async function handleLinesheetOrder(request: Request, url: URL) {
+  const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");
+  const wholesaleSession = await getWholesaleSession(shopifyCustomerId);
+  if (!wholesaleSession) {
+    return json({ wholesale: false }, { status: 403 });
+  }
+
+  const shop = url.searchParams.get("shop");
+  if (!shop) return json({ error: "Missing shop param" }, { status: 400 });
+
+  let payload: any;
+  try {
+    payload = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  const rawLines: Array<{ variant_id: unknown; quantity: unknown }> = Array.isArray(payload?.lines)
+    ? payload.lines
+    : [];
+  const lines = rawLines
+    .map((l) => ({
+      variantId: String(l.variant_id ?? "").replace(/\D/g, ""),
+      quantity: Math.floor(Number(l.quantity)),
+    }))
+    .filter((l) => l.variantId && Number.isFinite(l.quantity) && l.quantity > 0);
+
+  if (lines.length === 0) {
+    return json({ error: "No items selected." }, { status: 422 });
+  }
+  if (lines.length > 250) {
+    return json({ error: "Too many line items (max 250)." }, { status: 422 });
+  }
+
+  const { admin } = await unauthenticated.admin(shop);
+
+  // Batch-validate every variant: availability, CMS price, MOQ.
+  let nodes: any[] = [];
+  try {
+    const res = await admin.graphql(
+      `query LinesheetOrderVariants($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on ProductVariant {
+            id
+            sku
+            title
+            price
+            product {
+              id
+              title
+              status
+              hiddenVariants: metafield(namespace: "custom", key: "wholesale_hidden_variants") { value }
+            }
+          }
+        }
+      }`,
+      { variables: { ids: lines.map((l) => `gid://shopify/ProductVariant/${l.variantId}`) } }
+    );
+    const body = await res.json();
+    nodes = body.data?.nodes ?? [];
+  } catch (err) {
+    console.error("[app-proxy/linesheet-order] variant lookup failed:", err);
+    return json({ error: "Failed to validate items" }, { status: 502 });
+  }
+
+  const nodeById = new Map(
+    nodes.filter(Boolean).map((n: any) => [String(n.id.split("/").pop()), n])
+  );
+  const cmsMap = await getCmsVariantMap(
+    lines.map((l) => ({ id: l.variantId, sku: nodeById.get(l.variantId)?.sku }))
+  );
+
+  const problems: string[] = [];
+  const lineItems: any[] = [];
+  let subtotalCents = 0;
+  let retailSubtotalCents = 0;
+
+  for (const line of lines) {
+    const node = nodeById.get(line.variantId);
+    if (!node) {
+      problems.push(`Unknown item (${line.variantId}).`);
+      continue;
+    }
+    const label = node.sku || node.product.title;
+    const retailCents = Math.round(parseFloat(node.price) * 100);
+    const state = resolveVariantWholesale({
+      cms: cmsMap.get(line.variantId),
+      variantId: line.variantId,
+      hiddenVariantIds: parseHiddenVariantIds(node.product?.hiddenVariants?.value),
+      productActive: node.product?.status === "ACTIVE",
+      customerType: wholesaleSession.customerType,
+      retailCents,
+    });
+    if (!state.available) {
+      problems.push(`${label} is not available for wholesale.`);
+      continue;
+    }
+    if (!wholesaleSession.exemptFromMoq && line.quantity < state.moq) {
+      problems.push(`${label}: minimum order quantity is ${state.moq}.`);
+      continue;
+    }
+
+    subtotalCents += state.priceCents * line.quantity;
+    retailSubtotalCents += retailCents * line.quantity;
+    const discountPct =
+      retailCents > 0
+        ? Math.round((1 - state.priceCents / retailCents) * 10000) / 100
+        : 0;
+    lineItems.push({
+      variantId: node.id,
+      quantity: line.quantity,
+      appliedDiscount: {
+        valueType: "PERCENTAGE",
+        value: discountPct,
+        title: "Wholesale",
+      },
+    });
+  }
+
+  if (problems.length > 0) {
+    return json({ error: problems.join(" ") }, { status: 422 });
+  }
+
+  // Order minimum: enforced server-side against the wholesale subtotal.
+  const minimums = await getEffectiveOrderMinimum(wholesaleSession.shopifyCustomerId);
+  if (subtotalCents < Math.round(minimums.minimumOrderValue * 100)) {
+    return json(
+      {
+        error: `Order minimum is $${minimums.minimumOrderValue.toFixed(2)} — this order totals $${(subtotalCents / 100).toFixed(2)}.`,
+        minimum_cents: Math.round(minimums.minimumOrderValue * 100),
+        subtotal_cents: subtotalCents,
+      },
+      { status: 422 }
+    );
+  }
+
+  const termsTag =
+    wholesaleSession.paymentTerms === "NET_30"
+      ? "net-30"
+      : wholesaleSession.paymentTerms === "NET_60"
+        ? "net-60"
+        : null;
+
+  let draftOrder: any;
+  try {
+    const draftRes = await admin.graphql(
+      `#graphql
+      mutation linesheetDraftOrderCreate($input: DraftOrderInput!) {
+        draftOrderCreate(input: $input) {
+          draftOrder { id name invoiceUrl totalPrice }
+          userErrors { field message }
+        }
+      }`,
+      {
+        variables: {
+          input: {
+            lineItems,
+            customerId: `gid://shopify/Customer/${wholesaleSession.shopifyCustomerId}`,
+            tags: ["wholesale", "linesheet", ...(termsTag ? [termsTag] : [])],
+            note: `Wholesale line sheet order${termsTag ? ` — payment terms ${termsTag.toUpperCase()}` : ""}.`,
+          },
+        },
+      }
+    );
+    const draftData = await draftRes.json();
+    const errors = draftData.data?.draftOrderCreate?.userErrors ?? [];
+    if (errors.length > 0) {
+      console.error("[app-proxy/linesheet-order] userErrors:", errors);
+      return json({ error: "Failed to create order.", details: errors }, { status: 500 });
+    }
+    draftOrder = draftData.data?.draftOrderCreate?.draftOrder;
+  } catch (err) {
+    console.error("[app-proxy/linesheet-order] draftOrderCreate failed:", err);
+    return json({ error: "Failed to create order" }, { status: 502 });
+  }
+  if (!draftOrder) {
+    return json({ error: "Order not returned" }, { status: 500 });
+  }
+
+  const overallDiscountPct =
+    retailSubtotalCents > 0
+      ? Math.round((1 - subtotalCents / retailSubtotalCents) * 100)
+      : 0;
+
+  await db.wholesaleOrder.create({
+    data: {
+      shopifyDraftOrderId: draftOrder.id.split("/").pop() ?? "",
+      orderName: draftOrder.name,
+      shopifyCustomerId: wholesaleSession.shopifyCustomerId,
+      paymentTerms: wholesaleSession.paymentTerms,
+      totalAmount: subtotalCents,
+      discountPercent: overallDiscountPct,
+      isBackorder: false,
+      orderTags: JSON.stringify(["wholesale", "linesheet", ...(termsTag ? [termsTag] : [])]),
+      status: "PENDING",
+    },
+  });
+
+  return proxyJson({
+    ok: true,
+    order_name: draftOrder.name,
+    invoice_url: draftOrder.invoiceUrl,
+    subtotal_cents: subtotalCents,
+    item_count: lineItems.length,
+    payment_terms: wholesaleSession.paymentTerms,
+  });
+}

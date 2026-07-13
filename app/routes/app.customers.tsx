@@ -61,6 +61,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     paymentTerms: c.paymentTerms,
     minimumOrderValue: c.minimumOrderValue,
     exemptFromMoq: c.exemptFromMoq,
+    taxExempt: c.taxExempt,
     effectiveDiscount: resolveDiscountPercent(c),
     hasDiscountOverride: c.discountPercent !== null,
     profileName: c.pricingProfile?.name ?? null,
@@ -206,6 +207,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
+  if (intent === "update_tax_exempt") {
+    await db.wholesaleCustomer.update({
+      where: { id: customerId },
+      data: { taxExempt: String(formData.get("taxExempt")) === "true" },
+    });
+  }
+
   if (intent === "update_moq_exempt") {
     await db.wholesaleCustomer.update({
       where: { id: customerId },
@@ -247,6 +255,7 @@ type CustomerRowData = {
   paymentTerms: string;
   minimumOrderValue: number | null;
   exemptFromMoq: boolean;
+  taxExempt: boolean;
   effectiveDiscount: number;
   hasDiscountOverride: boolean;
   profileName: string | null;
@@ -258,6 +267,8 @@ function CustomerRow({ customer, index }: { customer: CustomerRowData; index: nu
   const minFetcher = useFetcher();
   const moqFetcher = useFetcher();
   const [moqExempt, setMoqExempt] = useState(customer.exemptFromMoq);
+  const taxFetcher = useFetcher();
+  const [taxExempt, setTaxExempt] = useState(customer.taxExempt);
   const [selectedStatus, setSelectedStatus] = useState(customer.status);
   const [selectedType, setSelectedType] = useState(customer.customerType);
   const [minValue, setMinValue] = useState(
@@ -335,6 +346,21 @@ function CustomerRow({ customer, index }: { customer: CustomerRowData; index: nu
             setMoqExempt(checked);
             moqFetcher.submit(
               { intent: "update_moq_exempt", customerId: customer.id, exemptFromMoq: String(checked) },
+              { method: "post" }
+            );
+          }}
+        />
+      </IndexTable.Cell>
+      <IndexTable.Cell>
+        <Checkbox
+          label=""
+          labelHidden
+          checked={taxExempt}
+          disabled={taxFetcher.state !== "idle"}
+          onChange={(checked) => {
+            setTaxExempt(checked);
+            taxFetcher.submit(
+              { intent: "update_tax_exempt", customerId: customer.id, taxExempt: String(checked) },
               { method: "post" }
             );
           }}
@@ -628,6 +654,7 @@ export default function CustomersPage() {
                 { title: "Terms" },
                 { title: "Min. Order" },
                 { title: "MOQ Exempt" },
+                { title: "Tax Exempt" },
                 { title: "Actions" },
               ]}
               selectable={false}

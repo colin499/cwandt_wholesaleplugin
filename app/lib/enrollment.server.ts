@@ -165,6 +165,21 @@ export async function syncCustomerToShopify(
       { metafields }
     )
   );
+  // Tax exemption is a native Shopify customer field — checkout and draft
+  // orders honor it automatically once set. Projected like the tags: DB is
+  // the source, this sync is the only writer.
+  ops.push(
+    runMutation(
+      "customerUpdate(taxExempt)",
+      `mutation SetTaxExempt($input: CustomerInput!) {
+        customerUpdate(input: $input) {
+          customer { id }
+          userErrors { field message }
+        }
+      }`,
+      { input: { id: gid, taxExempt: customer.taxExempt } }
+    )
+  );
 
   await Promise.all(ops);
 

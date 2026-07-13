@@ -80,6 +80,7 @@ model WholesaleCustomer {
   paymentTerms      String   @default("CREDIT_CARD")
   minimumOrderValue Float?
   exemptFromMoq     Boolean  @default(false) // per-customer: ignore variant MOQs everywhere
+  taxExempt         Boolean  @default(false) // projected to Shopify Customer.taxExempt on sync
   approvedAt        DateTime?
   approvedBy        String?
   notes             String?

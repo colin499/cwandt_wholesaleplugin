@@ -303,3 +303,37 @@
   /* Qty column is screen-only — hide in print/PDF */
   .wh-ls-col-qty { display: none; }
 }
+
+/* ── Orderable linesheet (2026-07) ─────────────────────────────────────── */
+.wh-ls-qty-input {
+  width: 4.5em;
+  padding: 0.3em 0.4em;
+  border: 1px solid #999;
+  border-radius: 4px;
+  text-align: right;
+  font: inherit;
+}
+.wh-ls-qty--below-moq {
+  border-color: #c0392b;
+  background: #fdecea;
+}
+.wh-ls-order-result {
+  margin: 0.75em 0;
+  padding: 0.75em 1em;
+  border-radius: 6px;
+  font-size: 0.95em;
+}
+.wh-ls-order-result--success {
+  background: #e8f5e9;
+  border: 1px solid #2e7d32;
+  color: #1b5e20;
+}
+.wh-ls-order-result--error {
+  background: #fdecea;
+  border: 1px solid #c0392b;
+  color: #7b1f1a;
+}
+.wh-ls-order-result a {
+  font-weight: 600;
+  color: inherit;
+}

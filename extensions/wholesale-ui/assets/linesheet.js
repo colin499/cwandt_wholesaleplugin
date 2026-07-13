@@ -2,13 +2,13 @@
  * CW&T Wholesale Line Sheet — client-side renderer
  *
  * Fetches all wholesale product data from the App Proxy (/apps/wholesale/linesheet-data),
- * renders a grouped product table, and wires up Print, Download PDF, and Add to Cart actions.
+ * renders a grouped product table with quantity inputs, and submits the order as
+ * ONE Shopify draft order at exact CMS wholesale prices (POST /linesheet-order) —
+ * the theme cart is NOT used, because it would check out at retail prices.
+ * Print and Download PDF are unchanged.
  *
  * Reads wholesale status from sessionStorage / <meta name="wh-customer"> (same mechanism
  * as wholesale.js) — no async customer status fetch required.
- *
- * Bundle sizes are read from the data-bundle-sizes attribute on .wh-linesheet (set by the
- * Liquid block from merchant-configurable settings, default "6,12,24").
  *
  * html2pdf.js must be loaded before this script runs (loaded via the Liquid block).
  */
@@ -17,7 +17,7 @@
   "use strict";
 
   var SK_STATUS    = "wh_status";
-  var SK_LINESHEET = "wh_linesheet_v1"; // versioned key — bump if response shape changes
+  var SK_LINESHEET = "wh_linesheet_v2"; // versioned key — bump if response shape changes
 
   /* -------------------------------------------------------------------------
      Wholesale status check (mirrors wholesale.js — synchronous)
@@ -30,20 +30,6 @@
     var isWholesale = !!meta && meta.getAttribute("content") === "1";
     sessionStorage.setItem(SK_STATUS, isWholesale ? "1" : "0");
     return isWholesale;
-  }
-
-  /* -------------------------------------------------------------------------
-     Bundle size config — read from data-bundle-sizes attribute on .wh-linesheet
-     ---------------------------------------------------------------------- */
-
-  function parseBundleSizes(container) {
-    var raw = container ? container.getAttribute("data-bundle-sizes") : "";
-    if (!raw) return [6, 12, 24];
-    var sizes = raw
-      .split(",")
-      .map(function (s) { return parseInt(s.trim(), 10); })
-      .filter(function (n) { return !isNaN(n) && n > 0; });
-    return sizes.length > 0 ? sizes : [6, 12, 24];
   }
 
   /* -------------------------------------------------------------------------
@@ -111,16 +97,17 @@
      bundleSizes are parsed ints from block settings — safe to interpolate directly
      ---------------------------------------------------------------------- */
 
-  function buildQtySelectHTML(variantId, bundleSizes, disabled) {
-    var disabledAttr = disabled ? " disabled" : "";
-    var opts = '<option value="0">—</option>';
-    bundleSizes.forEach(function (size) {
-      opts += "<option value=\"" + size + "\">" + size + "</option>";
-    });
+  function buildQtyInputHTML(variant) {
+    // Numeric input; 0 = not ordering, otherwise the server enforces MOQ
+    // (and we pre-validate client-side). Out-of-stock variants stay
+    // orderable — draft orders don't reserve inventory, so backorder lines
+    // ride along in the same order.
     return (
-      "<select class=\"wh-ls-qty-select\"" +
-      " data-variant-id=\"" + variantId + "\"" +
-      disabledAttr + ">" + opts + "</select>"
+      '<input type="number" class="wh-ls-qty-input" inputmode="numeric"' +
+      ' min="0" step="1" value="" placeholder="0"' +
+      ' data-variant-id="' + variant.id + '"' +
+      ' data-moq="' + (variant.moq || 1) + '"' +
+      ' data-price="' + variant.wh_price + '">'
     );
   }
 
@@ -128,7 +115,7 @@
      Build the full line sheet HTML from API response data
      ---------------------------------------------------------------------- */
 
-  function buildHTML(data, bundleSizes) {
+  function buildHTML(data) {
     if (!data.collections || data.collections.length === 0) {
       return '<p class="wh-ls-empty">No products are available in your line sheet.</p>';
     }
@@ -164,13 +151,6 @@
         variants.forEach(function (variant, idx) {
           var isFirst = idx === 0;
           var outOfStock = !variant.available;
-          // Backorder variants (available but no inventory) must not go through /cart/add.js —
-          // they need the Draft Order flow (wholesale.js on the product page handles this).
-          // TODO: support backorders from the line sheet by splitting the cart submission:
-          //   in-stock items → /cart/add.js, backorder items → POST /apps/wholesale/backorder.
-          //   Until then, disable the qty select so customers use the product page for backorders.
-          var isBackorder = variant.available && variant.in_stock === 0;
-          var selectDisabled = outOfStock || isBackorder;
 
           html += '<tr class="' + (isFirst ? "wh-ls-row-first" : "wh-ls-row-cont") + '">';
 
@@ -226,9 +206,8 @@
           }
           html += '<td class="' + stockClass + '">' + esc(stockText) + "</td>";
 
-          // Qty select — disabled for out-of-stock and backorder variants (see TODO above)
           html += '<td class="wh-ls-col-qty wh-no-print">';
-          html += buildQtySelectHTML(variant.id, bundleSizes, selectDisabled);
+          html += buildQtyInputHTML(variant);
           html += "</td>";
 
           html += "</tr>";
@@ -242,83 +221,145 @@
   }
 
   /* -------------------------------------------------------------------------
-     Cart helpers — read selected quantities, update count display, submit
+     Order helpers — collect lines, live subtotal vs order minimum, submit
      ---------------------------------------------------------------------- */
 
-  function getCartItems(content) {
-    var items = [];
-    content.querySelectorAll(".wh-ls-qty-select").forEach(function (select) {
-      var qty = parseInt(select.value, 10) || 0;
+  function getOrderLines(content) {
+    var lines = [];
+    content.querySelectorAll(".wh-ls-qty-input").forEach(function (input) {
+      var qty = parseInt(input.value, 10) || 0;
       if (qty > 0) {
-        items.push({
-          id: parseInt(select.getAttribute("data-variant-id"), 10),
+        lines.push({
+          variant_id: parseInt(input.getAttribute("data-variant-id"), 10),
           quantity: qty,
+          moq: parseInt(input.getAttribute("data-moq"), 10) || 1,
+          price: parseInt(input.getAttribute("data-price"), 10) || 0,
+          input: input,
         });
       }
     });
-    return items;
+    return lines;
   }
 
-  function updateCartCount(content, cartCountEl) {
-    if (!cartCountEl) return;
-    var selects = content.querySelectorAll(".wh-ls-qty-select");
-    var total = 0;
-    selects.forEach(function (select) {
-      total += parseInt(select.value, 10) || 0;
+  var orderMinimumCents = null; // fetched at init; null = unknown
+
+  function fetchOrderMinimum() {
+    fetch("/apps/wholesale/order-minimums", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (data && typeof data.minimumOrderValue === "number") {
+          orderMinimumCents = Math.round(data.minimumOrderValue * 100);
+        }
+      })
+      .catch(function () { /* advisory only — server enforces */ });
+  }
+
+  function updateSummary(content, summaryEl) {
+    if (!summaryEl) return;
+    var lines = getOrderLines(content);
+    var subtotal = 0;
+    var units = 0;
+    var moqShort = [];
+    lines.forEach(function (l) {
+      subtotal += l.price * l.quantity;
+      units += l.quantity;
+      l.input.classList.toggle("wh-ls-qty--below-moq", l.quantity < l.moq);
+      if (l.quantity < l.moq) moqShort.push(l);
     });
-    if (total > 0) {
-      cartCountEl.textContent = total + " item" + (total === 1 ? "" : "s") + " selected";
-      cartCountEl.hidden = false;
-    } else {
-      cartCountEl.textContent = "";
-      cartCountEl.hidden = true;
+
+    if (lines.length === 0) {
+      summaryEl.textContent = "";
+      summaryEl.hidden = true;
+      return;
     }
+    var text = units + " unit" + (units === 1 ? "" : "s") + " · " + formatMoney(subtotal);
+    if (moqShort.length > 0) {
+      text += " — " + moqShort.length + " item" + (moqShort.length === 1 ? "" : "s") + " below MOQ";
+    } else if (orderMinimumCents !== null && subtotal < orderMinimumCents) {
+      text += " — minimum " + formatMoney(orderMinimumCents);
+    }
+    summaryEl.textContent = text;
+    summaryEl.hidden = false;
   }
 
-  function submitCart(content, addBtn, cartCountEl) {
-    var items = getCartItems(content);
-    if (items.length === 0) {
-      alert("Select quantities before adding to cart.");
+  function showOrderResult(resultEl, ok, message, invoiceUrl) {
+    if (!resultEl) return;
+    resultEl.textContent = "";
+    resultEl.className = "wh-ls-order-result " + (ok ? "wh-ls-order-result--success" : "wh-ls-order-result--error");
+    resultEl.appendChild(document.createTextNode(message + " "));
+    if (invoiceUrl) {
+      var link = document.createElement("a");
+      link.href = invoiceUrl;
+      link.textContent = "Review & pay →";
+      resultEl.appendChild(link);
+    }
+    resultEl.hidden = false;
+    resultEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  function submitOrder(content, submitBtn, summaryEl, resultEl) {
+    var lines = getOrderLines(content);
+    if (lines.length === 0) {
+      showOrderResult(resultEl, false, "Enter quantities before submitting.");
+      return;
+    }
+    var short = lines.filter(function (l) { return l.quantity < l.moq; });
+    if (short.length > 0) {
+      showOrderResult(
+        resultEl, false,
+        "Some quantities are below the minimum order quantity — highlighted in the Qty column."
+      );
       return;
     }
 
-    var original = addBtn.textContent;
-    addBtn.disabled = true;
-    addBtn.textContent = "Adding…";
+    var original = submitBtn.textContent;
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Submitting order…";
+    if (resultEl) resultEl.hidden = true;
 
-    fetch("/cart/add.js", {
+    fetch("/apps/wholesale/linesheet-order", {
       method: "POST",
       credentials: "same-origin",
-      headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({ items: items }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        lines: lines.map(function (l) {
+          return { variant_id: l.variant_id, quantity: l.quantity };
+        }),
+      }),
     })
       .then(function (r) {
-        if (!r.ok) {
-          return r.json().then(function (d) {
-            throw new Error(d.description || "Failed to add to cart");
+        return r
+          .json()
+          .catch(function () { throw new Error("HTTP " + r.status); })
+          .then(function (data) {
+            if (!r.ok) {
+              var e = new Error((data && data.error) || "HTTP " + r.status);
+              e.userFacing = !!(data && data.error);
+              throw e;
+            }
+            return data;
           });
-        }
-        return r.json();
       })
-      .then(function () {
-        addBtn.textContent = "Added to cart!";
-        // Reset all selects to zero
-        content.querySelectorAll(".wh-ls-qty-select").forEach(function (s) {
-          s.value = "0";
-        });
-        updateCartCount(content, cartCountEl);
-        setTimeout(function () {
-          addBtn.disabled = false;
-          addBtn.textContent = original;
-        }, 2500);
+      .then(function (data) {
+        if (!data || !data.ok) throw new Error((data && data.error) || "Order failed");
+        var msg = "Order " + (data.order_name || "") + " submitted (" +
+          formatMoney(data.subtotal_cents) + ")." +
+          (data.payment_terms === "NET_30" ? " Payment terms: Net 30." :
+           data.payment_terms === "NET_60" ? " Payment terms: Net 60." : "");
+        showOrderResult(resultEl, true, msg, data.invoice_url);
+        content.querySelectorAll(".wh-ls-qty-input").forEach(function (i) { i.value = ""; });
+        updateSummary(content, summaryEl);
+        submitBtn.disabled = false;
+        submitBtn.textContent = original;
       })
       .catch(function (err) {
-        addBtn.textContent = "Error — try again";
-        console.error("[linesheet] Cart add error:", err.message);
-        setTimeout(function () {
-          addBtn.disabled = false;
-          addBtn.textContent = original;
-        }, 3000);
+        showOrderResult(
+          resultEl, false,
+          err && err.userFacing ? err.message : "Could not submit order. Please try again or contact us."
+        );
+        console.error("[linesheet] order error:", err);
+        submitBtn.disabled = false;
+        submitBtn.textContent = original;
       });
   }
 
@@ -362,17 +403,17 @@
      ---------------------------------------------------------------------- */
 
   function init() {
-    var container = document.querySelector(".wh-linesheet");
     var content   = document.getElementById("wh-linesheet-content");
     var loading   = document.getElementById("wh-linesheet-loading");
     var printBtn  = document.getElementById("wh-ls-print");
     var dlBtn     = document.getElementById("wh-ls-download");
-    var addBtn    = document.getElementById("wh-ls-add-to-cart");
-    var cartCount = document.getElementById("wh-ls-cart-count");
+    var submitBtn = document.getElementById("wh-ls-submit-order");
+    var summaryEl = document.getElementById("wh-ls-summary");
+    var resultEl  = document.getElementById("wh-ls-order-result");
 
     if (!content) return;
 
-    var bundleSizes = parseBundleSizes(container);
+    fetchOrderMinimum();
 
     if (!getWholesaleStatus()) {
       if (loading) {
@@ -391,14 +432,14 @@
         return;
       }
 
-      content.innerHTML = buildHTML(data, bundleSizes);
+      content.innerHTML = buildHTML(data);
       content.removeAttribute("hidden");
 
-      // Wire qty selects → live cart count
-      content.querySelectorAll(".wh-ls-qty-select").forEach(function (select) {
-        select.addEventListener("change", function () {
-          updateCartCount(content, cartCount);
-        });
+      // Wire qty inputs → live summary (subtotal, MOQ shortfalls, minimum)
+      content.addEventListener("input", function (e) {
+        if (e.target && e.target.classList.contains("wh-ls-qty-input")) {
+          updateSummary(content, summaryEl);
+        }
       });
 
       if (printBtn) {
@@ -409,8 +450,10 @@
         dlBtn.addEventListener("click", function () { downloadPDF(content, dlBtn); });
       }
 
-      if (addBtn) {
-        addBtn.addEventListener("click", function () { submitCart(content, addBtn, cartCount); });
+      if (submitBtn) {
+        submitBtn.addEventListener("click", function () {
+          submitOrder(content, submitBtn, summaryEl, resultEl);
+        });
       }
     });
   }
