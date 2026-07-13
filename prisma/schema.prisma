@@ -198,6 +198,7 @@ model CmsVariantCache {
   wholesalePriceCents   Int      // CMS wholesale_price × 100
   distributorPriceCents Int      // CMS distributor_price × 100
   moq                   Int      @default(1)
+  caseSize              Int?     // preferred case pack (soft); null = no case concept
   cmsStatus             String   @default("")
   updatedAt             DateTime @updatedAt
 }

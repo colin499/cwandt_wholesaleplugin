@@ -337,3 +337,14 @@
   font-weight: 600;
   color: inherit;
 }
+.wh-ls-case-btn {
+  margin-left: 0.4em;
+  padding: 0.25em 0.5em;
+  font-size: 0.8em;
+  border: 1px solid #999;
+  border-radius: 4px;
+  background: #f5f5f5;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wh-ls-case-btn:hover { background: #e8e8e8; }

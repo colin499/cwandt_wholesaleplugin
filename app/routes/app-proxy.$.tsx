@@ -351,6 +351,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           available: v.availableForSale,
           in_stock: v.inventoryQuantity ?? 0,
           moq: session.exemptFromMoq ? 1 : state.moq,
+          case_size: state.caseSize,
         }];
       });
 
@@ -452,6 +453,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         available: v.availableForSale,
         in_stock: v.inventoryQuantity ?? 0,
         moq: session.exemptFromMoq ? 1 : state.moq,
+        case_size: state.caseSize,
         selected_options: v.selectedOptions,
         image_url: v.image?.url ?? null,
         currency_code: shopCurrency,

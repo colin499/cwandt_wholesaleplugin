@@ -28,7 +28,7 @@
   window.__whWholesaleInit = true;
 
   var SK_STATUS = "wh_status";    // "1" | "0"
-  var SK_PRICES = "wh_prices2_";  // + productId → JSON (v2: adds product_wholesale flag)
+  var SK_PRICES = "wh_prices3_";  // + productId → JSON (v3: adds case_size)
   var SK_CATALOG = "wh_catalog_"; // + handle → JSON (catalog-card price)
 
   // Catalog-card "Wholesale $X" labels on collection/search/home pages.
@@ -275,8 +275,12 @@
     if (priceEl) priceEl.textContent = formatMoney(variant.wh_price);
 
     if (moqEl) {
-      if (variant.moq > 1) {
-        moqEl.textContent = "Minimum order: " + variant.moq + " units";
+      var moqText = variant.moq > 1 ? "Minimum order: " + variant.moq + " units" : "";
+      if (variant.case_size && variant.case_size > 1) {
+        moqText += (moqText ? " · " : "") + "Ships in cases of " + variant.case_size;
+      }
+      if (moqText) {
+        moqEl.textContent = moqText;
         moqEl.removeAttribute("hidden");
       } else {
         moqEl.setAttribute("hidden", "");

@@ -29,6 +29,7 @@ export type CmsWholesaleVariant = {
   wholesale_price: number;   // dollars, e.g. 12.50
   distributor_price: number; // dollars, e.g. 9.00
   moq: number;
+  case_size: number | null;  // preferred case pack (soft encouragement); null = none
   in_stock: number;          // from CMS Variant; not used for stock display (Shopify is authoritative)
   status: string;
 };
@@ -100,6 +101,7 @@ export async function syncCmsDataToDb(): Promise<{ count: number; error?: string
         wholesalePriceCents: Math.round(v.wholesale_price * 100),
         distributorPriceCents: Math.round(v.distributor_price * 100),
         moq: v.moq || 1,
+        caseSize: v.case_size && v.case_size > 1 ? v.case_size : null,
         cmsStatus: v.status || "",
       };
       return db.cmsVariantCache.upsert({
@@ -149,6 +151,7 @@ export type CmsCachedVariant = {
   wholesalePriceCents: number;
   distributorPriceCents: number;
   moq: number;
+  caseSize: number | null;
 };
 
 export type CmsLookupEntry = { id: number | string; sku?: string | null };
@@ -180,6 +183,7 @@ export async function getCmsVariantMap(
     wholesalePriceCents: true,
     distributorPriceCents: true,
     moq: true,
+    caseSize: true,
   } as const;
 
   const idRows = await db.cmsVariantCache.findMany({
@@ -192,6 +196,7 @@ export async function getCmsVariantMap(
     wholesalePriceCents: row.wholesalePriceCents,
     distributorPriceCents: row.distributorPriceCents,
     moq: row.moq,
+    caseSize: row.caseSize,
   });
   for (const row of idRows) map.set(row.shopifyVariantId, toCached(row));
 
@@ -222,7 +227,7 @@ export async function getCmsVariant(
 ): Promise<CmsCachedVariant | null> {
   return db.cmsVariantCache.findUnique({
     where: { shopifyVariantId: String(shopifyVariantId) },
-    select: { wholesalePriceCents: true, distributorPriceCents: true, moq: true },
+    select: { wholesalePriceCents: true, distributorPriceCents: true, moq: true, caseSize: true },
   });
 }
 
@@ -264,7 +269,7 @@ export function parseHiddenVariantIds(raw: string | null | undefined): Set<strin
 }
 
 export type VariantWholesaleState =
-  | { available: true; priceCents: number; moq: number; discountPercent: number }
+  | { available: true; priceCents: number; moq: number; caseSize: number | null; discountPercent: number }
   | { available: false };
 
 /**
@@ -287,7 +292,7 @@ export function resolveVariantWholesale(opts: {
     customerType === "DISTRIBUTOR" ? cms.distributorPriceCents : cms.wholesalePriceCents;
   const discountPercent =
     retailCents > 0 ? Math.round((1 - priceCents / retailCents) * 100) : 0;
-  return { available: true, priceCents, moq: cms.moq, discountPercent };
+  return { available: true, priceCents, moq: cms.moq, caseSize: cms.caseSize, discountPercent };
 }
 
 // ---------------------------------------------------------------------------

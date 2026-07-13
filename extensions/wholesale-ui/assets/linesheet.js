@@ -17,7 +17,7 @@
   "use strict";
 
   var SK_STATUS    = "wh_status";
-  var SK_LINESHEET = "wh_linesheet_v2"; // versioned key — bump if response shape changes
+  var SK_LINESHEET = "wh_linesheet_v3"; // versioned key — bump if response shape changes
 
   /* -------------------------------------------------------------------------
      Wholesale status check (mirrors wholesale.js — synchronous)
@@ -102,13 +102,22 @@
     // (and we pre-validate client-side). Out-of-stock variants stay
     // orderable — draft orders don't reserve inventory, so backorder lines
     // ride along in the same order.
-    return (
+    var caseSize = variant.case_size && variant.case_size > 1 ? variant.case_size : 0;
+    var html =
       '<input type="number" class="wh-ls-qty-input" inputmode="numeric"' +
       ' min="0" step="1" value="" placeholder="0"' +
       ' data-variant-id="' + variant.id + '"' +
       ' data-moq="' + (variant.moq || 1) + '"' +
-      ' data-price="' + variant.wh_price + '">'
-    );
+      ' data-case="' + caseSize + '"' +
+      ' data-price="' + variant.wh_price + '">';
+    if (caseSize) {
+      // Soft case-pack encouragement: one click adds a full case.
+      html +=
+        '<button type="button" class="wh-ls-case-btn wh-no-print"' +
+        ' data-target-variant="' + variant.id + '"' +
+        ' title="Ships in cases of ' + caseSize + '">+ case (' + caseSize + ")</button>";
+    }
+    return html;
   }
 
   /* -------------------------------------------------------------------------
@@ -233,6 +242,7 @@
           variant_id: parseInt(input.getAttribute("data-variant-id"), 10),
           quantity: qty,
           moq: parseInt(input.getAttribute("data-moq"), 10) || 1,
+          caseSize: parseInt(input.getAttribute("data-case"), 10) || 0,
           price: parseInt(input.getAttribute("data-price"), 10) || 0,
           input: input,
         });
@@ -272,7 +282,14 @@
       summaryEl.hidden = true;
       return;
     }
+    var caseNotes = [];
+    lines.forEach(function (l) {
+      if (l.caseSize > 0 && l.quantity >= l.caseSize && l.quantity % l.caseSize === 0) {
+        caseNotes.push(l.quantity / l.caseSize + " case" + (l.quantity / l.caseSize === 1 ? "" : "s"));
+      }
+    });
     var text = units + " unit" + (units === 1 ? "" : "s") + " · " + formatMoney(subtotal);
+    if (caseNotes.length > 0) text += " (" + caseNotes.join(", ") + ")";
     if (moqShort.length > 0) {
       text += " — " + moqShort.length + " item" + (moqShort.length === 1 ? "" : "s") + " below MOQ";
     } else if (orderMinimumCents !== null && subtotal < orderMinimumCents) {
@@ -311,6 +328,26 @@
       );
       return;
     }
+
+    // Soft case nudge: quantities that don't pack into full cases get ONE
+    // suggestion; submitting again sends the order as entered. Never a block.
+    var offCase = lines.filter(function (l) {
+      return l.caseSize > 0 && l.quantity % l.caseSize !== 0;
+    });
+    if (offCase.length > 0 && !submitBtn.__whCaseNudged) {
+      submitBtn.__whCaseNudged = true;
+      var parts = offCase.map(function (l) {
+        var up = Math.ceil(l.quantity / l.caseSize) * l.caseSize;
+        return l.quantity + " → " + up + " (" + (up / l.caseSize) + " full case" + (up / l.caseSize === 1 ? "" : "s") + " of " + l.caseSize + ")";
+      });
+      showOrderResult(
+        resultEl, false,
+        "These items pack in cases: " + parts.join("; ") +
+        ". Adjust quantities, or press Submit again to order as entered."
+      );
+      return;
+    }
+    submitBtn.__whCaseNudged = false;
 
     var original = submitBtn.textContent;
     submitBtn.disabled = true;
@@ -438,8 +475,26 @@
       // Wire qty inputs → live summary (subtotal, MOQ shortfalls, minimum)
       content.addEventListener("input", function (e) {
         if (e.target && e.target.classList.contains("wh-ls-qty-input")) {
+          if (submitBtn) submitBtn.__whCaseNudged = false;
           updateSummary(content, summaryEl);
         }
+      });
+
+      // "+ case" buttons add one full case to the row's quantity.
+      content.addEventListener("click", function (e) {
+        var btn = e.target && e.target.closest ? e.target.closest(".wh-ls-case-btn") : null;
+        if (!btn) return;
+        var input = content.querySelector(
+          '.wh-ls-qty-input[data-variant-id="' + btn.getAttribute("data-target-variant") + '"]'
+        );
+        if (!input) return;
+        var caseSize = parseInt(input.getAttribute("data-case"), 10) || 0;
+        if (!caseSize) return;
+        var current = parseInt(input.value, 10) || 0;
+        // Snap up to the next full case boundary.
+        input.value = String(Math.floor(current / caseSize) * caseSize + caseSize);
+        if (submitBtn) submitBtn.__whCaseNudged = false;
+        updateSummary(content, summaryEl);
       });
 
       if (printBtn) {
