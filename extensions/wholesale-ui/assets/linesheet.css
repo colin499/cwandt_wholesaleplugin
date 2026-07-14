@@ -1,13 +1,26 @@
 /* ==========================================================================
    CW&T Wholesale Line Sheet — styles
    Scoped to .wh-linesheet / .wh-ls-* to avoid theme collisions.
+   Design rules (2026-07-13): all text black, no bold, no grey text.
    ========================================================================== */
 
 /* --------------------------------------------------------------------------
-   Page shell
+   Page shell — padded; horizontal scroll lives on the content wrapper so the
+   sticky totals bar (position: sticky) is not trapped in a scroll container.
    -------------------------------------------------------------------------- */
 .wh-linesheet {
   max-width: 100%;
+  padding: 24px 40px 0;
+  color: #000;
+}
+
+@media (max-width: 749px) {
+  .wh-linesheet {
+    padding: 16px 16px 0;
+  }
+}
+
+#wh-linesheet-content {
   overflow-x: auto;
 }
 
@@ -22,44 +35,116 @@
 
 .wh-ls-title {
   font-size: 1.4em;
-  font-weight: 600;
+  font-weight: 400;
+  text-transform: uppercase;
   margin: 0 0 4px;
 }
 
 .wh-ls-subtitle {
   font-size: 12px;
-  opacity: 0.55;
   margin: 0;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 /* --------------------------------------------------------------------------
-   Toolbar buttons
+   Toolbar buttons + export menu
    -------------------------------------------------------------------------- */
 .wh-ls-actions {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
+  align-items: center;
+  margin-top: 14px;
+}
+
+/* --------------------------------------------------------------------------
+   Customer panel — top right: PO, name, company, ship-to, shipping option.
+   Colon-aligned key/value rows, same idiom as the PDP spec table.
+   -------------------------------------------------------------------------- */
+.wh-ls-customer {
+  font-size: 12px;
+  line-height: 17px;
+  text-align: left;
+}
+
+.wh-ls-kv {
+  display: flex;
+  margin: 0 0 2px;
+}
+
+.wh-ls-key {
+  min-width: 9ch; /* longest key (SHIPPING) + 1 */
+  text-transform: uppercase;
+}
+
+.wh-ls-val::before {
+  content: ": ";
+  white-space: pre;
+}
+
+.wh-ls-po-input {
+  font: inherit;
+  border: 1px solid #000;
+  border-radius: 0;
+  padding: 1px 6px;
+  width: 14ch;
+}
+
+.wh-ls-own-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
 }
 
 .wh-ls-btn {
   display: inline-block;
   padding: 8px 18px;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 400;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  border: 1px solid currentColor;
+  border: 1px solid #000;
   background: transparent;
-  color: inherit;
+  color: #000;
   cursor: pointer;
-  transition: opacity 0.15s;
   white-space: nowrap;
 }
 
-.wh-ls-btn:hover { opacity: 0.65; }
+.wh-ls-btn:hover { background: #000; color: #fff; }
 .wh-ls-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.wh-ls-export-wrap {
+  position: relative;
+}
+
+.wh-ls-export-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 30;
+  min-width: 200px;
+  background: #fff;
+  border: 1px solid #000;
+}
+
+.wh-ls-export-item {
+  display: block;
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-family: inherit;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: #000;
+  cursor: pointer;
+}
+
+.wh-ls-export-item:hover { background: #000; color: #fff; }
 
 /* --------------------------------------------------------------------------
    Collection sections
@@ -71,13 +156,12 @@
 
 .wh-ls-collection-title {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 400;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  opacity: 0.5;
   margin: 0 0 10px;
   padding-bottom: 6px;
-  border-bottom: 1px solid currentColor;
+  border-bottom: 1px solid #000;
 }
 
 /* --------------------------------------------------------------------------
@@ -86,27 +170,42 @@
 .wh-ls-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 11px;
   table-layout: fixed;
+  border: 1px solid #000; /* black frame around the entire table */
 }
 
 .wh-ls-table th {
   text-align: left;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 400;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  opacity: 0.5;
   padding: 6px 8px;
-  border-bottom: 1px solid currentColor;
+  border-bottom: 1px solid #000;
+}
+
+.wh-ls-sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.wh-ls-sort {
+  font-size: 8px;
+  letter-spacing: 0;
+  display: inline-block;
+  vertical-align: middle;
+  margin-top: -1px;
 }
 
 .wh-ls-table td {
-  padding: 8px 8px;
-  vertical-align: top;
-  border-bottom: 1px solid currentColor;
-  opacity: 0.9;
+  padding: 7px 8px;
+  vertical-align: middle;
+  border-bottom: 1px solid #000;
+  color: #000;
 }
+
 
 .wh-ls-col-img {
   width: 60px;
@@ -116,25 +215,65 @@
   width: 22%;
 }
 
+.wh-ls-col-variant {
+  width: 18%;
+}
+
+.wh-ls-col-moq {
+  width: 52px;
+}
+
+.wh-ls-col-stock {
+  width: 84px;
+}
+
 .wh-ls-col-price {
   white-space: nowrap;
 }
 
-.wh-ls-col-wh {
-  font-weight: 500;
-}
-
 .wh-ls-img {
-  width: 54px;
-  height: 54px;
+  width: 44px;
+  height: 25px; /* 16:9 */
   object-fit: cover;
   display: block;
 }
 
+/* Blue placeholder frame where the image will go (temporary, by request) */
+.wh-ls-img-ph {
+  display: block;
+  width: 44px;
+  height: 25px; /* 16:9 */
+  background: #2563eb;
+}
+
+/* Hover-to-expand image popup — just the image, centered in the window */
+.wh-ls-thumb {
+  display: block; /* block kills the inline baseline gap that un-centered rows */
+}
+
+.wh-ls-thumb-pop {
+  display: none;
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 40;
+  pointer-events: none;
+}
+
+.wh-ls-thumb-pop img {
+  display: block;
+  width: min(720px, 70vw);
+  height: auto;
+}
+
+.wh-ls-thumb:hover .wh-ls-thumb-pop {
+  display: block;
+}
+
 .wh-ls-product-link {
-  color: inherit;
+  color: #000;
   text-decoration: none;
-  font-weight: 500;
 }
 
 .wh-ls-product-link:hover {
@@ -144,64 +283,43 @@
 /* Printed title (no hyperlink) hidden on screen */
 .wh-print-only-title {
   display: none;
-  font-weight: 500;
-}
-
-/* Row continuations — slightly lighter separator */
-.wh-ls-row-cont td {
-  border-bottom-color: currentColor;
-  opacity: 0.7;
 }
 
 /* --------------------------------------------------------------------------
-   Qty column — bundle size selects
+   Qty column
    -------------------------------------------------------------------------- */
 .wh-ls-col-qty {
-  width: 72px;
+  width: 165px;
   white-space: nowrap;
 }
 
-.wh-ls-qty-select {
-  font-size: 12px;
-  font-family: inherit;
-  padding: 3px 4px;
-  border: 1px solid currentColor;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  width: 100%;
-  appearance: auto;
-}
-
-.wh-ls-qty-select:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
 /* --------------------------------------------------------------------------
-   Cart count + Add to Cart button
+   Sticky totals bar — sticks below the site header while the sheet scrolls.
+   `top` is set by linesheet.js to the measured header height.
    -------------------------------------------------------------------------- */
-.wh-ls-cart-count {
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  align-self: center;
+.wh-ls-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  margin-bottom: 16px;
+  background: #fff;
+}
+
+.wh-ls-summary {
+  font-size: 13px;
+  letter-spacing: 0.02em;
   white-space: nowrap;
 }
 
-.wh-ls-btn--cart {
-  font-weight: 600;
-}
-
-/* --------------------------------------------------------------------------
-   Stock indicators
-   -------------------------------------------------------------------------- */
-.wh-ls-stock--out {
-  opacity: 0.4;
-}
-
-.wh-ls-stock--backorder::before {
-  content: "⟳ ";
+.wh-ls-save-state {
+  font-size: 12px;
+  white-space: nowrap;
+  text-transform: uppercase;
 }
 
 /* --------------------------------------------------------------------------
@@ -209,26 +327,112 @@
    -------------------------------------------------------------------------- */
 .wh-ls-loading {
   font-size: 13px;
-  opacity: 0.5;
   padding: 24px 0;
 }
 
 .wh-ls-empty,
 .wh-ls-error {
   font-size: 13px;
-  opacity: 0.6;
   padding: 16px 0;
 }
 
 .wh-ls-login-prompt {
   font-size: 14px;
-  padding: 24px 0;
+  padding: 24px 40px;
+}
+
+/* --------------------------------------------------------------------------
+   Orderable linesheet — qty inputs, order result, case buttons
+   -------------------------------------------------------------------------- */
+.wh-ls-qty-input {
+  width: 4.5em;
+  height: 26px;
+  box-sizing: border-box;
+  padding: 0 0.4em;
+  border: 1px solid #000;
+  border-radius: 0;
+  text-align: right;
+  font: inherit;
+  font-size: 12px;
+}
+
+.wh-ls-qty--below-moq {
+  border-color: #c0392b;
+  background: #fdecea;
+}
+
+.wh-ls-order-result {
+  margin: 0.75em 0;
+  padding: 0.75em 1em;
+  font-size: 0.95em;
+  border: 1px solid #000;
+  color: #000;
+}
+
+.wh-ls-order-result--success {
+  background: #e8f5e9;
+}
+
+.wh-ls-order-result--error {
+  background: #fdecea;
+}
+
+.wh-ls-order-result a {
+  color: #000;
+}
+
+.wh-ls-case-btn {
+  margin-left: 10px;
+  height: 26px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  font-size: 12px;
+  font-family: inherit;
+  vertical-align: top;
+  border: 1px solid #000;
+  border-radius: 0;
+  background: #f5f5f5;
+  color: #000;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.wh-ls-case-btn:hover { background: #000; color: #fff; }
+
+/* --------------------------------------------------------------------------
+   Previous-orders history
+   -------------------------------------------------------------------------- */
+.wh-ls-history {
+  margin: 12px 0 20px;
+  padding: 12px 16px;
+  border: 1px solid #000;
+}
+
+.wh-ls-history-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.wh-ls-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.wh-ls-btn--small {
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 /* --------------------------------------------------------------------------
    Print styles
    -------------------------------------------------------------------------- */
-.wh-no-print    { /* applied inline in html, overridden by @media print below */ }
+.wh-no-print    { /* hidden in @media print below */ }
 .wh-print-only  { display: none; }
 
 .wh-ls-print-header {
@@ -237,13 +441,11 @@
 
 .wh-ls-print-company {
   font-size: 10pt;
-  font-weight: 600;
   margin: 0;
 }
 
 .wh-ls-print-title {
   font-size: 9pt;
-  opacity: 0.55;
   margin: 2pt 0 0;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -260,6 +462,7 @@
   .wh-linesheet {
     font-size: 9pt;
     color: #000;
+    padding: 0;
   }
 
   .wh-ls-collection {
@@ -286,8 +489,7 @@
 
   .wh-ls-table td {
     padding: 4pt 4pt;
-    border-bottom: 0.3pt solid #ccc;
-    opacity: 1 !important;
+    border-bottom: 0.3pt solid #000;
   }
 
   .wh-ls-img {
@@ -303,48 +505,3 @@
   /* Qty column is screen-only — hide in print/PDF */
   .wh-ls-col-qty { display: none; }
 }
-
-/* ── Orderable linesheet (2026-07) ─────────────────────────────────────── */
-.wh-ls-qty-input {
-  width: 4.5em;
-  padding: 0.3em 0.4em;
-  border: 1px solid #999;
-  border-radius: 4px;
-  text-align: right;
-  font: inherit;
-}
-.wh-ls-qty--below-moq {
-  border-color: #c0392b;
-  background: #fdecea;
-}
-.wh-ls-order-result {
-  margin: 0.75em 0;
-  padding: 0.75em 1em;
-  border-radius: 6px;
-  font-size: 0.95em;
-}
-.wh-ls-order-result--success {
-  background: #e8f5e9;
-  border: 1px solid #2e7d32;
-  color: #1b5e20;
-}
-.wh-ls-order-result--error {
-  background: #fdecea;
-  border: 1px solid #c0392b;
-  color: #7b1f1a;
-}
-.wh-ls-order-result a {
-  font-weight: 600;
-  color: inherit;
-}
-.wh-ls-case-btn {
-  margin-left: 0.4em;
-  padding: 0.25em 0.5em;
-  font-size: 0.8em;
-  border: 1px solid #999;
-  border-radius: 4px;
-  background: #f5f5f5;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.wh-ls-case-btn:hover { background: #e8e8e8; }

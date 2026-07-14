@@ -33,76 +33,53 @@
 /* --------------------------------------------------------------------------
    Wholesale Price Block (product page)
    -------------------------------------------------------------------------- */
+/* Key/value table, all rows in the theme's body font, all black:
+   MSRP      : $180.00
+   WHOLESALE : $90.00
+   MOQ       : 5 UNITS  */
 .wh-price-block {
   margin-top: 12px;
-}
-
-.wh-price-label {
+  color: #000;
   font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  opacity: 0.6;
-  margin: 0 0 4px;
+  line-height: 15px;
 }
 
-.wh-price-amount {
-  font-size: 1.4em;
-  font-weight: 500;
+.wh-price-row {
+  display: flex;
   margin: 0;
-  min-height: 1.4em; /* prevents layout shift while loading */
 }
 
-.wh-price-moq {
-  font-size: 12px;
-  opacity: 0.7;
-  margin: 4px 0 0;
+.wh-price-key {
+  min-width: 10ch; /* aligns the colons; WHOLESALE / CASE SIZE are 9ch */
 }
 
-.wh-price-stock {
-  font-size: 12px;
-  margin: 6px 0 0;
-}
-
-.wh-price-stock--out {
-  color: inherit;
-  opacity: 0.6;
+.wh-price-val::before {
+  content: ": ";
+  white-space: pre;
 }
 
 .wh-price-discount-note {
-  font-size: 11px;
-  opacity: 0.5;
   margin: 4px 0 0;
 }
 
-/* Loading skeleton — shown while wholesale prices are fetching */
-.wh-price-skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 12px;
+.wh-linesheet-link {
+  display: inline-block;
+  margin-top: 1.5em;
+  padding: 12px 24px;
+  border: 1px solid #000;
+  color: #000;
+  text-decoration: none;
+  text-transform: uppercase;
 }
 
-.wh-skeleton-bar {
-  display: block;
-  height: 1em;
-  background: currentColor;
-  opacity: 0.08;
-  border-radius: 2px;
-  animation: wh-pulse 1.4s ease-in-out infinite;
+.wh-linesheet-link:hover {
+  background: #000;
+  color: #fff;
 }
 
-.wh-skeleton-bar:first-child {
-  width: 60%;
-}
-
-.wh-skeleton-bar:last-child {
-  width: 40%;
-}
-
-@keyframes wh-pulse {
-  0%, 100% { opacity: 0.06; }
-  50%       { opacity: 0.14; }
-}
+/* Loading skeleton — removed by design (2026-07-13). The price block simply
+   stays hidden until prices arrive. .wh-price-skeleton markup no longer
+   exists; JS references to it are null-safe no-ops. */
 
 /* --------------------------------------------------------------------------
    Variant-level in-stock indicator (product page, wholesale only)

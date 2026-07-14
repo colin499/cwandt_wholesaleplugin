@@ -62,6 +62,7 @@ const LINESHEET_QUERY = `
               availableForSale
               inventoryQuantity
               price
+              image { url }
             }
           }
         }
@@ -149,6 +150,55 @@ function notWholesale() {
 
 function proxyJson(data: unknown) {
   return json(data, { headers: { "Cache-Control": "no-store" } });
+}
+
+// ── Linesheet draft persistence helpers ──────────────────────────────────────
+// One active DRAFT row per customer (latest wins); SUBMITTED rows are the
+// order history customers can duplicate into a new draft.
+
+function sanitizeDraftLines(raw: unknown): Array<{ variant_id: number; quantity: number }> {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((l: any) => ({
+      variant_id: parseInt(String(l?.variant_id ?? "").replace(/\D/g, ""), 10),
+      quantity: Math.floor(Number(l?.quantity)),
+    }))
+    .filter(
+      (l) =>
+        Number.isFinite(l.variant_id) &&
+        l.variant_id > 0 &&
+        Number.isFinite(l.quantity) &&
+        l.quantity > 0
+    )
+    .slice(0, 250);
+}
+
+function parseDraftLines(stored: string): Array<{ variant_id: number; quantity: number }> {
+  try {
+    return sanitizeDraftLines(JSON.parse(stored));
+  } catch {
+    return [];
+  }
+}
+
+async function getActiveDraft(shopifyCustomerId: string) {
+  return db.linesheetDraft.findFirst({
+    where: { shopifyCustomerId, status: "DRAFT" },
+    orderBy: { updatedAt: "desc" },
+  });
+}
+
+async function upsertActiveDraft(
+  shopifyCustomerId: string,
+  lines: Array<{ variant_id: number; quantity: number }>,
+  subtotalCents: number
+) {
+  const existing = await getActiveDraft(shopifyCustomerId);
+  const data = { lines: JSON.stringify(lines), subtotalCents };
+  if (existing) {
+    return db.linesheetDraft.update({ where: { id: existing.id }, data });
+  }
+  return db.linesheetDraft.create({ data: { shopifyCustomerId, ...data } });
 }
 
 // ── GET handler ──────────────────────────────────────────────────────────────
@@ -352,6 +402,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           in_stock: v.inventoryQuantity ?? 0,
           moq: session.exemptFromMoq ? 1 : state.moq,
           case_size: state.caseSize,
+          image_url: v.image?.url ?? null, // per-variant image; falls back to product image client-side
         }];
       });
 
@@ -469,6 +520,88 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     });
   }
 
+  // ── /apps/wholesale/linesheet-draft (GET) ───────────────────────────────
+  // The customer's active draft (for prefilling the linesheet) plus their
+  // submitted-sheet history (for duplicating a previous order) and the
+  // customer/shipping info shown top-right on the sheet.
+  if (subpath === "linesheet-draft") {
+    const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");
+    const session = await getWholesaleSession(shopifyCustomerId);
+    if (!session) return json({ wholesale: false }, { status: 403 });
+
+    const draft = await getActiveDraft(session.shopifyCustomerId);
+    const history = await db.linesheetDraft.findMany({
+      where: { shopifyCustomerId: session.shopifyCustomerId, status: "SUBMITTED" },
+      orderBy: { updatedAt: "desc" },
+      take: 10,
+    });
+
+    // Default shipping address from Shopify (best effort — panel renders
+    // without it if the lookup fails).
+    let address: string[] = [];
+    const shop = url.searchParams.get("shop");
+    if (shop) {
+      try {
+        const { admin } = await unauthenticated.admin(shop);
+        const res = await admin.graphql(
+          `query CustomerAddress($id: ID!) {
+            customer(id: $id) {
+              defaultAddress {
+                address1 address2 city provinceCode zip countryCodeV2
+              }
+            }
+          }`,
+          { variables: { id: `gid://shopify/Customer/${session.shopifyCustomerId}` } }
+        );
+        const body = await res.json();
+        const a = body.data?.customer?.defaultAddress;
+        if (a) {
+          address = [
+            a.address1,
+            a.address2,
+            [a.city, a.provinceCode, a.zip].filter(Boolean).join(", "),
+            a.countryCodeV2 === "US" ? null : a.countryCodeV2,
+          ].filter(Boolean);
+        }
+      } catch (err) {
+        console.error("[app-proxy/linesheet-draft] address lookup failed:", err);
+      }
+    }
+
+    const customerRow = await db.wholesaleCustomer.findUnique({
+      where: { shopifyCustomerId: session.shopifyCustomerId },
+      select: { firstName: true, lastName: true, email: true, company: true },
+    });
+
+    return proxyJson({
+      wholesale: true,
+      customer: {
+        name:
+          [customerRow?.firstName, customerRow?.lastName].filter(Boolean).join(" ") ||
+          customerRow?.email ||
+          "",
+        company: customerRow?.company || "",
+        email: customerRow?.email || "",
+        address,
+      },
+      draft: draft
+        ? {
+            lines: parseDraftLines(draft.lines),
+            po_number: draft.poNumber || "",
+            ship_own_label: draft.shipOwnLabel,
+            updated_at: draft.updatedAt,
+          }
+        : null,
+      history: history.map((h) => ({
+        id: h.id,
+        order_name: h.orderName,
+        subtotal_cents: h.subtotalCents,
+        line_count: parseDraftLines(h.lines).length,
+        submitted_at: h.updatedAt,
+      })),
+    });
+  }
+
   return json({ error: "Not found" }, { status: 404 });
 };
 
@@ -482,6 +615,60 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (subpath === "linesheet-order") {
     return handleLinesheetOrder(request, url);
+  }
+
+  // ── /apps/wholesale/linesheet-draft (POST) ──────────────────────────────
+  // Autosave the customer's active draft. Body: { lines, subtotal_cents }.
+  if (subpath === "linesheet-draft") {
+    const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");
+    const session = await getWholesaleSession(shopifyCustomerId);
+    if (!session) return json({ wholesale: false }, { status: 403 });
+
+    let payload: any;
+    try {
+      payload = await request.json();
+    } catch {
+      return json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const lines = sanitizeDraftLines(payload?.lines);
+    const subtotalCents = Math.max(0, Math.floor(Number(payload?.subtotal_cents)) || 0);
+    const poNumber = String(payload?.po_number ?? "").slice(0, 120);
+    const shipOwnLabel = payload?.ship_own_label === true;
+
+    const saved = await upsertActiveDraft(session.shopifyCustomerId, lines, subtotalCents);
+    await db.linesheetDraft.update({
+      where: { id: saved.id },
+      data: { poNumber: poNumber || null, shipOwnLabel },
+    });
+    return proxyJson({ ok: true, line_count: lines.length });
+  }
+
+  // ── /apps/wholesale/linesheet-duplicate (POST) ──────────────────────────
+  // Copy a SUBMITTED sheet's lines into the customer's active draft.
+  // Body: { draft_id }. Returns the lines so the client can prefill.
+  if (subpath === "linesheet-duplicate") {
+    const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");
+    const session = await getWholesaleSession(shopifyCustomerId);
+    if (!session) return json({ wholesale: false }, { status: 403 });
+
+    let payload: any;
+    try {
+      payload = await request.json();
+    } catch {
+      return json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const source = await db.linesheetDraft.findFirst({
+      where: {
+        id: String(payload?.draft_id ?? ""),
+        shopifyCustomerId: session.shopifyCustomerId,
+        status: "SUBMITTED",
+      },
+    });
+    if (!source) return json({ error: "Order sheet not found" }, { status: 404 });
+
+    const lines = parseDraftLines(source.lines);
+    await upsertActiveDraft(session.shopifyCustomerId, lines, source.subtotalCents);
+    return proxyJson({ ok: true, lines });
   }
 
   if (subpath !== "backorder") {
@@ -664,6 +851,9 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     }))
     .filter((l) => l.variantId && Number.isFinite(l.quantity) && l.quantity > 0);
 
+  const poNumber = String(payload?.po_number ?? "").slice(0, 120).trim();
+  const shipOwnLabel = payload?.ship_own_label === true;
+
   if (lines.length === 0) {
     return json({ error: "No items selected." }, { status: 422 });
   }
@@ -684,6 +874,8 @@ async function handleLinesheetOrder(request: Request, url: URL) {
             sku
             title
             price
+            availableForSale
+            inventoryQuantity
             product {
               id
               title
@@ -745,13 +937,24 @@ async function handleLinesheetOrder(request: Request, url: URL) {
       retailCents > 0
         ? Math.round((1 - state.priceCents / retailCents) * 10000) / 100
         : 0;
+    // Out-of-stock lines split into a SEPARATE backorder draft order —
+    // Shopify's invoice checkout strips deny-policy OOS lines at payment
+    // time, so they can't ride in the payable order.
+    const isBackorder = !node.availableForSale || (node.inventoryQuantity ?? 0) <= 0;
     lineItems.push({
-      variantId: node.id,
-      quantity: line.quantity,
-      appliedDiscount: {
-        valueType: "PERCENTAGE",
-        value: discountPct,
-        title: "Wholesale",
+      isBackorder,
+      amountCents: state.priceCents * line.quantity,
+      input: {
+        variantId: node.id,
+        quantity: line.quantity,
+        appliedDiscount: {
+          valueType: "PERCENTAGE",
+          value: discountPct,
+          title: "Wholesale",
+        },
+        ...(isBackorder
+          ? { customAttributes: [{ key: "Backorder", value: "ships when back in stock" }] }
+          : {}),
       },
     });
   }
@@ -780,9 +983,27 @@ async function handleLinesheetOrder(request: Request, url: URL) {
         ? "net-60"
         : null;
 
-  let draftOrder: any;
-  try {
-    const draftRes = await admin.graphql(
+  const stockItems = lineItems.filter((l) => !l.isBackorder);
+  const backorderItems = lineItems.filter((l) => l.isBackorder);
+
+  const noteLines = [
+    poNumber ? `PO: ${poNumber}` : null,
+    shipOwnLabel
+      ? "Customer provides own shipping label — send carton dimensions when packed."
+      : null,
+  ];
+
+  const sess = wholesaleSession; // non-null capture for the closure below
+
+  async function createDraft(items: typeof lineItems, isBackorderOrder: boolean) {
+    const tags = [
+      "wholesale",
+      "linesheet",
+      ...(isBackorderOrder ? ["backorder"] : []),
+      ...(termsTag ? [termsTag] : []),
+      ...(shipOwnLabel ? ["customer-shipping-label"] : []),
+    ];
+    const res = await admin.graphql(
       `#graphql
       mutation linesheetDraftOrderCreate($input: DraftOrderInput!) {
         draftOrderCreate(input: $input) {
@@ -793,54 +1014,105 @@ async function handleLinesheetOrder(request: Request, url: URL) {
       {
         variables: {
           input: {
-            lineItems,
-            customerId: `gid://shopify/Customer/${wholesaleSession.shopifyCustomerId}`,
-            tags: ["wholesale", "linesheet", ...(termsTag ? [termsTag] : [])],
-            note: `Wholesale line sheet order${termsTag ? ` — payment terms ${termsTag.toUpperCase()}` : ""}.`,
+            lineItems: items.map((l) => l.input),
+            customerId: `gid://shopify/Customer/${sess.shopifyCustomerId}`,
+            tags,
+            note: [
+              isBackorderOrder
+                ? "Wholesale BACKORDER — do not invoice until stock arrives, then send the invoice from this draft."
+                : `Wholesale line sheet order${termsTag ? ` — payment terms ${termsTag.toUpperCase()}` : ""}.`,
+              ...noteLines,
+            ]
+              .filter(Boolean)
+              .join("\n"),
+            ...(poNumber ? { poNumber } : {}),
           },
         },
       }
     );
-    const draftData = await draftRes.json();
-    const errors = draftData.data?.draftOrderCreate?.userErrors ?? [];
+    const body = await res.json();
+    const errors = body.data?.draftOrderCreate?.userErrors ?? [];
     if (errors.length > 0) {
       console.error("[app-proxy/linesheet-order] userErrors:", errors);
-      return json({ error: "Failed to create order.", details: errors }, { status: 500 });
+      return null;
     }
-    draftOrder = draftData.data?.draftOrderCreate?.draftOrder;
+    const draftOrder = body.data?.draftOrderCreate?.draftOrder;
+    if (!draftOrder) return null;
+
+    const amount = items.reduce((sum, l) => sum + l.amountCents, 0);
+    await db.wholesaleOrder.create({
+      data: {
+        shopifyDraftOrderId: draftOrder.id.split("/").pop() ?? "",
+        orderName: draftOrder.name,
+        shopifyCustomerId: sess.shopifyCustomerId,
+        paymentTerms: sess.paymentTerms,
+        totalAmount: amount,
+        discountPercent:
+          retailSubtotalCents > 0
+            ? Math.round((1 - subtotalCents / retailSubtotalCents) * 100)
+            : 0,
+        isBackorder: isBackorderOrder,
+        backorderNote: isBackorderOrder ? "Split from linesheet order — invoice when stock arrives." : null,
+        orderTags: JSON.stringify(tags),
+        status: "PENDING",
+      },
+    });
+    return draftOrder;
+  }
+
+  let stockOrder: any = null;
+  let backorderOrder: any = null;
+  try {
+    if (stockItems.length > 0) stockOrder = await createDraft(stockItems, false);
+    if (backorderItems.length > 0) backorderOrder = await createDraft(backorderItems, true);
   } catch (err) {
     console.error("[app-proxy/linesheet-order] draftOrderCreate failed:", err);
     return json({ error: "Failed to create order" }, { status: 502 });
   }
-  if (!draftOrder) {
-    return json({ error: "Order not returned" }, { status: 500 });
+  if (stockItems.length > 0 && !stockOrder) {
+    return json({ error: "Failed to create order" }, { status: 500 });
+  }
+  if (backorderItems.length > 0 && !backorderOrder && stockItems.length === 0) {
+    return json({ error: "Failed to create order" }, { status: 500 });
   }
 
-  const overallDiscountPct =
-    retailSubtotalCents > 0
-      ? Math.round((1 - subtotalCents / retailSubtotalCents) * 100)
-      : 0;
+  // Primary order for history/response: the payable one, else the backorder.
+  const draftOrder = stockOrder ?? backorderOrder;
 
-  await db.wholesaleOrder.create({
-    data: {
-      shopifyDraftOrderId: draftOrder.id.split("/").pop() ?? "",
-      orderName: draftOrder.name,
-      shopifyCustomerId: wholesaleSession.shopifyCustomerId,
-      paymentTerms: wholesaleSession.paymentTerms,
-      totalAmount: subtotalCents,
-      discountPercent: overallDiscountPct,
-      isBackorder: false,
-      orderTags: JSON.stringify(["wholesale", "linesheet", ...(termsTag ? [termsTag] : [])]),
-      status: "PENDING",
-    },
-  });
+  // Flip the customer's active draft into SUBMITTED history (or record one if
+  // they ordered without an autosaved draft) so it can be duplicated later.
+  const submittedData = {
+    lines: JSON.stringify(lines.map((l) => ({ variant_id: Number(l.variantId), quantity: l.quantity }))),
+    subtotalCents,
+    poNumber: poNumber || null,
+    shipOwnLabel,
+    status: "SUBMITTED",
+    shopifyDraftOrderId: draftOrder.id.split("/").pop() ?? "",
+    orderName:
+      stockOrder && backorderOrder
+        ? `${stockOrder.name} + ${backorderOrder.name} (backorder)`
+        : draftOrder.name,
+  };
+  const activeDraft = await getActiveDraft(wholesaleSession.shopifyCustomerId);
+  if (activeDraft) {
+    await db.linesheetDraft.update({ where: { id: activeDraft.id }, data: submittedData });
+  } else {
+    await db.linesheetDraft.create({
+      data: { shopifyCustomerId: wholesaleSession.shopifyCustomerId, ...submittedData },
+    });
+  }
 
   return proxyJson({
     ok: true,
     order_name: draftOrder.name,
-    invoice_url: draftOrder.invoiceUrl,
+    // Pay-now link only exists for the in-stock order; an all-backorder
+    // submission is invoiced by the merchant when stock arrives.
+    invoice_url: stockOrder ? stockOrder.invoiceUrl : null,
     subtotal_cents: subtotalCents,
     item_count: lineItems.length,
     payment_terms: wholesaleSession.paymentTerms,
+    backorder_name: backorderOrder ? backorderOrder.name : null,
+    backorder_count: backorderItems.length,
+    all_backorder: !stockOrder && !!backorderOrder,
   });
 }

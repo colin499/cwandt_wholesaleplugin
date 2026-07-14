@@ -21,15 +21,52 @@
 
     <div class="wh-ls-header wh-no-print">
       <div class="wh-ls-header-text">
-        <h1 class="wh-ls-title">{{ block.settings.title | default: 'Wholesale Line Sheet' }}</h1>
-        <p class="wh-ls-subtitle">{{ block.settings.company_name | default: 'CW&T' }} &mdash; wholesale pricing</p>
+        <h1 class="wh-ls-title">{{ block.settings.title | default: 'CW&T Wholesale Linesheet' }}</h1>
+        <p class="wh-ls-subtitle">CONTACT : {{ block.settings.contact_email | default: 'hello@cwandt.com' }}</p>
+        <div class="wh-ls-actions">
+          <span id="wh-ls-save-state" class="wh-ls-save-state" aria-live="polite"></span>
+          <button type="button" class="wh-ls-btn" id="wh-ls-print">Print</button>
+          <div class="wh-ls-export-wrap">
+            <button type="button" class="wh-ls-btn" id="wh-ls-export" aria-haspopup="true" aria-expanded="false">Export &#9662;</button>
+            <div class="wh-ls-export-menu" id="wh-ls-export-menu" hidden>
+              <button type="button" class="wh-ls-export-item" data-export="csv">Download CSV</button>
+              <button type="button" class="wh-ls-export-item" data-export="pdf">Download PDF</button>
+              <button type="button" class="wh-ls-export-item" data-export="gsheet">Open in Google Sheets</button>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="wh-ls-actions">
-        <span id="wh-ls-summary" class="wh-ls-cart-count" hidden></span>
-        <button type="button" class="wh-ls-btn wh-ls-btn--cart" id="wh-ls-submit-order">Submit Wholesale Order</button>
-        <button type="button" class="wh-ls-btn" id="wh-ls-print">Print</button>
-        <button type="button" class="wh-ls-btn" id="wh-ls-download">Download PDF</button>
+
+      {% comment %}
+        Customer panel — PO number, name, company, shipping address.
+        Values filled by linesheet.js from /apps/wholesale/linesheet-draft.
+      {% endcomment %}
+      <div class="wh-ls-customer" id="wh-ls-customer">
+        <p class="wh-ls-kv">
+          <span class="wh-ls-key">PO #</span><span class="wh-ls-val"><input type="text" id="wh-ls-po" class="wh-ls-po-input" placeholder="optional" maxlength="120"></span>
+        </p>
+        <p class="wh-ls-kv">
+          <span class="wh-ls-key">NAME</span><span class="wh-ls-val" id="wh-ls-cust-name"></span>
+        </p>
+        <p class="wh-ls-kv">
+          <span class="wh-ls-key">COMPANY</span><span class="wh-ls-val" id="wh-ls-cust-company"></span>
+        </p>
+        <p class="wh-ls-kv">
+          <span class="wh-ls-key">EMAIL</span><span class="wh-ls-val" id="wh-ls-cust-email"></span>
+        </p>
+        <p class="wh-ls-kv">
+          <span class="wh-ls-key">SHIPPING</span><span class="wh-ls-val"><label class="wh-ls-own-label"><input type="checkbox" id="wh-ls-own-label"> I&rsquo;ll provide my own label</label></span>
+        </p>
       </div>
+    </div>
+
+    {% comment %}
+      Live totals bar — sticks below the site header while the sheet scrolls.
+      Counts and subtotal update as quantities change; submit lives here.
+    {% endcomment %}
+    <div class="wh-ls-sticky wh-no-print">
+      <span id="wh-ls-summary" class="wh-ls-summary"></span>
+      <button type="button" class="wh-ls-btn wh-ls-btn--cart" id="wh-ls-submit-order">Submit Wholesale Order</button>
     </div>
 
     {% comment %} Print header — hidden on screen, visible when printing {% endcomment %}
@@ -45,6 +82,9 @@
     </div>
 
     <div id="wh-linesheet-content" hidden></div>
+
+    {% comment %} Previous submitted order sheets — duplicate as a new draft {% endcomment %}
+    <div id="wh-ls-history" class="wh-ls-history wh-no-print" hidden></div>
 
   </div>
 
@@ -67,7 +107,13 @@
       "type": "text",
       "id": "title",
       "label": "Page Title",
-      "default": "Wholesale Line Sheet"
+      "default": "CW&T Wholesale Linesheet"
+    },
+    {
+      "type": "text",
+      "id": "contact_email",
+      "label": "Contact email (shown under the title)",
+      "default": "hello@cwandt.com"
     },
     {
       "type": "text",
@@ -75,7 +121,6 @@
       "label": "Company Name (shown on PDF)",
       "default": "CW&T"
     }
-  ],
-  "templates": ["page"]
+  ]
 }
 {% endschema %}

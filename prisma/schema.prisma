@@ -187,6 +187,30 @@ model WholesaleSettings {
 }
 
 // ---------------------------------------------------------------------------
+// Linesheet order drafts
+// One active DRAFT per customer (enforced in code, not schema); submitted
+// sheets stay as SUBMITTED history the customer can duplicate into a new
+// draft. lines: JSON array stored as text — [{"variant_id": n, "quantity": n}]
+// subtotalCents: client-estimated while DRAFT; server-final once SUBMITTED.
+// status: "DRAFT" | "SUBMITTED"
+// ---------------------------------------------------------------------------
+model LinesheetDraft {
+  id                  String   @id @default(cuid())
+  shopifyCustomerId   String
+  status              String   @default("DRAFT")
+  lines               String   @default("[]")
+  subtotalCents       Int      @default(0)
+  poNumber            String?  // customer's purchase-order reference
+  shipOwnLabel        Boolean  @default(false) // customer provides shipping label
+  shopifyDraftOrderId String?
+  orderName           String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([shopifyCustomerId, status])
+}
+
+// ---------------------------------------------------------------------------
 // CMS variant price/MOQ cache
 // Populated by syncCmsDataToDb() from GET /api/wholesale/variants/.
 // shopifyVariantId is the numeric Shopify variant ID stored as a string.

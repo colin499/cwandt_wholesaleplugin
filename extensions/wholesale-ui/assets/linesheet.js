@@ -17,7 +17,7 @@
   "use strict";
 
   var SK_STATUS    = "wh_status";
-  var SK_LINESHEET = "wh_linesheet_v3"; // versioned key — bump if response shape changes
+  var SK_LINESHEET = "wh_linesheet_v4"; // versioned key — bump if response shape changes
 
   /* -------------------------------------------------------------------------
      Wholesale status check (mirrors wholesale.js — synchronous)
@@ -115,7 +115,7 @@
       html +=
         '<button type="button" class="wh-ls-case-btn wh-no-print"' +
         ' data-target-variant="' + variant.id + '"' +
-        ' title="Ships in cases of ' + caseSize + '">+ case (' + caseSize + ")</button>";
+        ' title="Adds one case of ' + caseSize + '">+CASE</button>';
     }
     return html;
   }
@@ -123,6 +123,69 @@
   /* -------------------------------------------------------------------------
      Build the full line sheet HTML from API response data
      ---------------------------------------------------------------------- */
+
+  function stockCell(variant) {
+    // Anything not in stock is orderable as a backorder — say so.
+    var out = !variant.available || variant.in_stock <= 0;
+    var stockText = out ? "BACKORDER" : String(variant.in_stock);
+    return '<td class="wh-ls-col-stock">' + esc(stockText) + "</td>";
+  }
+
+  // Cells shared by variant rows and single-variant product rows:
+  // SKU | Retail | Wholesale | MOQ | Stock | Qty
+  function variantCellsHTML(variant) {
+    var html = "";
+    html += "<td>" + esc(variant.sku || "—") + "</td>";
+    html +=
+      '<td class="wh-ls-col-price">' +
+      formatMoney(variant.retail_price, variant.currency_code) +
+      "</td>";
+    html +=
+      '<td class="wh-ls-col-price wh-ls-col-wh">' +
+      formatMoney(variant.wh_price, variant.currency_code) +
+      "</td>";
+    html += '<td class="wh-ls-col-moq">' + (variant.moq > 1 ? variant.moq : "1") + "</td>";
+    html += stockCell(variant);
+    html += '<td class="wh-ls-col-qty wh-no-print">' + buildQtyInputHTML(variant) + "</td>";
+    return html;
+  }
+
+  function productTitleHTML(product) {
+    return (
+      '<a href="/products/' +
+      esc(product.handle) +
+      '" class="wh-ls-product-link wh-no-print-link">' +
+      esc(product.title) +
+      "</a>" +
+      '<span class="wh-print-only-title">' + esc(product.title) + "</span>"
+    );
+  }
+
+  function imageCellHTML(imageUrl, alt) {
+    // Small thumbnail that expands to a popup overlay on hover.
+    // Blue placeholder box when there is no image yet.
+    var html = '<td class="wh-ls-col-img"><span class="wh-ls-thumb">';
+    if (imageUrl) {
+      html +=
+        '<img src="' + esc(imageUrl) + '" alt="' + esc(alt) +
+        '" class="wh-ls-img" loading="lazy">';
+      html +=
+        '<span class="wh-ls-thumb-pop"><img src="' + esc(imageUrl) +
+        '" alt="" loading="lazy"></span>';
+    } else {
+      html += '<span class="wh-ls-img-ph" aria-hidden="true"></span>';
+    }
+    html += "</span></td>";
+    return html;
+  }
+
+  function sortableTh(label, key, numeric, extraClass) {
+    return (
+      '<th class="wh-ls-sortable' + (extraClass ? " " + extraClass : "") +
+      '" data-sort-key="' + key + '"' + (numeric ? ' data-sort-numeric="1"' : "") +
+      ">" + label + ' <span class="wh-ls-sort" aria-hidden="true">&#9652;&#9662;</span></th>'
+    );
+  }
 
   function buildHTML(data) {
     if (!data.collections || data.collections.length === 0) {
@@ -135,18 +198,22 @@
       if (!collection.products || collection.products.length === 0) return;
 
       html += '<section class="wh-ls-collection">';
-      html += '<h2 class="wh-ls-collection-title">' + esc(collection.title) + "</h2>";
+      // "Other" is the fallback bucket for products with no collection — the
+      // heading is noise there, so only real collection names get one.
+      if (collection.title && collection.title.toLowerCase() !== "other") {
+        html += '<h2 class="wh-ls-collection-title">' + esc(collection.title) + "</h2>";
+      }
 
       html += '<table class="wh-ls-table">';
       html += "<thead><tr>";
       html += '<th class="wh-ls-col-img"></th>';
-      html += "<th>Product</th>";
-      html += "<th>SKU</th>";
-      html += "<th>Options</th>";
-      html += "<th>Retail</th>";
-      html += "<th>Wholesale</th>";
-      html += "<th>MOQ</th>";
-      html += "<th>Stock</th>";
+      html += sortableTh("Product", "product", false, "wh-ls-col-title");
+      html += sortableTh("Variant", "variant", false, "wh-ls-col-variant");
+      html += sortableTh("SKU", "sku", false);
+      html += sortableTh("Retail", "retail", true);
+      html += sortableTh("Wholesale", "wholesale", true);
+      html += sortableTh("MOQ", "moq", true, "wh-ls-col-moq");
+      html += sortableTh("Stock", "stock", true, "wh-ls-col-stock");
       html += '<th class="wh-ls-col-qty wh-no-print">Qty</th>';
       html += "</tr></thead>";
       html += "<tbody>";
@@ -155,70 +222,24 @@
         var variants = product.variants;
         if (!variants || variants.length === 0) return;
 
-        var rowspan = variants.length;
-
-        variants.forEach(function (variant, idx) {
-          var isFirst = idx === 0;
-          var outOfStock = !variant.available;
-
-          html += '<tr class="' + (isFirst ? "wh-ls-row-first" : "wh-ls-row-cont") + '">';
-
-          if (isFirst) {
-            html += '<td class="wh-ls-col-img" rowspan="' + rowspan + '">';
-            if (product.image_url) {
-              html +=
-                '<img src="' +
-                esc(product.image_url) +
-                '" alt="' +
-                esc(product.title) +
-                '" class="wh-ls-img" loading="lazy">';
-            }
-            html += "</td>";
-
-            html += '<td class="wh-ls-col-title" rowspan="' + rowspan + '">';
-            html +=
-              '<a href="/products/' +
-              esc(product.handle) +
-              '" class="wh-ls-product-link wh-no-print-link">' +
-              esc(product.title) +
-              "</a>";
-            html +=
-              '<span class="wh-print-only-title">' + esc(product.title) + "</span>";
-            html += "</td>";
-          }
-
-          var optionLabel =
-            variant.title === "Default Title" ? "—" : variant.title;
-
-          html += "<td>" + esc(variant.sku || "—") + "</td>";
-          html += "<td>" + esc(optionLabel) + "</td>";
+        // One flat row per variant — image and product name repeat per row.
+        variants.forEach(function (variant) {
+          var optionLabel = variant.title === "Default Title" ? "—" : variant.title;
+          var stockSort = !variant.available ? -1 : variant.in_stock > 0 ? variant.in_stock : 0;
           html +=
-            '<td class="wh-ls-col-price">' +
-            formatMoney(variant.retail_price, variant.currency_code) +
-            "</td>";
-          html +=
-            '<td class="wh-ls-col-price wh-ls-col-wh">' +
-            formatMoney(variant.wh_price, variant.currency_code) +
-            "</td>";
-          html += "<td>" + (variant.moq > 1 ? variant.moq : "1") + "</td>";
-
-          var stockText, stockClass;
-          if (outOfStock) {
-            stockText = "Out of stock";
-            stockClass = "wh-ls-stock--out";
-          } else if (variant.in_stock > 0) {
-            stockText = String(variant.in_stock);
-            stockClass = "";
-          } else {
-            stockText = "Backorder";
-            stockClass = "wh-ls-stock--backorder";
-          }
-          html += '<td class="' + stockClass + '">' + esc(stockText) + "</td>";
-
-          html += '<td class="wh-ls-col-qty wh-no-print">';
-          html += buildQtyInputHTML(variant);
-          html += "</td>";
-
+            "<tr" +
+            ' data-product="' + esc(product.title) + '"' +
+            ' data-variant="' + esc(optionLabel) + '"' +
+            ' data-sku="' + esc(variant.sku || "") + '"' +
+            ' data-retail="' + variant.retail_price + '"' +
+            ' data-wholesale="' + variant.wh_price + '"' +
+            ' data-moq="' + (variant.moq > 1 ? variant.moq : 1) + '"' +
+            ' data-stock="' + stockSort + '"' +
+            ">";
+          html += imageCellHTML(variant.image_url || product.image_url, product.title);
+          html += '<td class="wh-ls-col-title">' + productTitleHTML(product) + "</td>";
+          html += '<td class="wh-ls-col-variant">' + esc(optionLabel) + "</td>";
+          html += variantCellsHTML(variant);
           html += "</tr>";
         });
       });
@@ -227,6 +248,124 @@
     });
 
     return html;
+  }
+
+  /* -------------------------------------------------------------------------
+     Group collapse/expand + data export (CSV / Google Sheets)
+     ---------------------------------------------------------------------- */
+
+  var lastData = null; // most recent linesheet-data response, for exports
+
+  /* -------------------------------------------------------------------------
+     Column sorting — click a header to sort that collection's rows;
+     click again to reverse. Rows carry data-* attributes for the keys.
+     ---------------------------------------------------------------------- */
+
+  function wireSorting(content) {
+    content.querySelectorAll(".wh-ls-table").forEach(function (table) {
+      var ths = table.querySelectorAll("th.wh-ls-sortable");
+      ths.forEach(function (th) {
+        th.addEventListener("click", function () {
+          var key = th.getAttribute("data-sort-key");
+          var numeric = th.getAttribute("data-sort-numeric") === "1";
+          var dir = th.getAttribute("data-sort-dir") === "asc" ? "desc" : "asc";
+          ths.forEach(function (other) {
+            other.removeAttribute("data-sort-dir");
+            var c = other.querySelector(".wh-ls-sort");
+            if (c) c.innerHTML = "&#9652;&#9662;";
+          });
+          th.setAttribute("data-sort-dir", dir);
+          var caret = th.querySelector(".wh-ls-sort");
+          if (caret) caret.innerHTML = dir === "asc" ? "&#9652;" : "&#9662;";
+
+          var tbody = table.querySelector("tbody");
+          var rows = Array.prototype.slice.call(tbody.querySelectorAll("tr"));
+          rows.sort(function (a, b) {
+            var av = a.getAttribute("data-" + key) || "";
+            var bv = b.getAttribute("data-" + key) || "";
+            var cmp = numeric
+              ? (parseFloat(av) || 0) - (parseFloat(bv) || 0)
+              : av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" });
+            return dir === "asc" ? cmp : -cmp;
+          });
+          rows.forEach(function (r) { tbody.appendChild(r); });
+        });
+      });
+    });
+  }
+
+  // Rows for CSV/TSV: [Product, Variant, SKU, Retail, Wholesale, MOQ, Case, Stock, Qty]
+  function buildExportRows(content) {
+    var rows = [["Product", "Variant", "SKU", "Retail", "Wholesale", "MOQ", "Case Size", "Stock", "Qty"]];
+    if (!lastData || !lastData.collections) return rows;
+    lastData.collections.forEach(function (collection) {
+      (collection.products || []).forEach(function (product) {
+        (product.variants || []).forEach(function (variant) {
+          var qtyInput = content.querySelector(
+            '.wh-ls-qty-input[data-variant-id="' + variant.id + '"]'
+          );
+          rows.push([
+            product.title,
+            variant.title === "Default Title" ? "" : variant.title,
+            variant.sku || "",
+            (variant.retail_price / 100).toFixed(2),
+            (variant.wh_price / 100).toFixed(2),
+            variant.moq > 1 ? variant.moq : 1,
+            variant.case_size && variant.case_size > 1 ? variant.case_size : "",
+            !variant.available || variant.in_stock <= 0 ? "Backorder" : variant.in_stock,
+            qtyInput && qtyInput.value ? qtyInput.value : "",
+          ]);
+        });
+      });
+    });
+    return rows;
+  }
+
+  function downloadCSV(content) {
+    var csv = buildExportRows(content)
+      .map(function (row) {
+        return row
+          .map(function (cell) {
+            var s = String(cell);
+            return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+          })
+          .join(",");
+      })
+      .join("\n");
+    var blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "cwandt-wholesale-linesheet.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  }
+
+  function openGoogleSheet(content, resultEl) {
+    var tsv = buildExportRows(content)
+      .map(function (row) { return row.join("\t"); })
+      .join("\n");
+    var finish = function (copied) {
+      window.open("https://sheets.new", "_blank", "noopener");
+      if (resultEl) {
+        showOrderResult(
+          resultEl,
+          copied,
+          copied
+            ? "Linesheet copied to clipboard — paste (⌘V) into the new Google Sheet."
+            : "Could not copy automatically — use Download CSV and import it into Google Sheets."
+        );
+      }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(tsv).then(
+        function () { finish(true); },
+        function () { finish(false); }
+      );
+    } else {
+      finish(false);
+    }
   }
 
   /* -------------------------------------------------------------------------
@@ -244,11 +383,27 @@
           moq: parseInt(input.getAttribute("data-moq"), 10) || 1,
           caseSize: parseInt(input.getAttribute("data-case"), 10) || 0,
           price: parseInt(input.getAttribute("data-price"), 10) || 0,
+          product: variantProductMap[String(input.getAttribute("data-variant-id"))] || "",
           input: input,
         });
       }
     });
     return lines;
+  }
+
+  // variant id → product handle, for counting distinct products in the summary
+  var variantProductMap = {};
+
+  function rebuildVariantProductMap(data) {
+    variantProductMap = {};
+    if (!data || !data.collections) return;
+    data.collections.forEach(function (collection) {
+      (collection.products || []).forEach(function (product) {
+        (product.variants || []).forEach(function (variant) {
+          variantProductMap[String(variant.id)] = product.handle;
+        });
+      });
+    });
   }
 
   var orderMinimumCents = null; // fetched at init; null = unknown
@@ -278,25 +433,199 @@
     });
 
     if (lines.length === 0) {
-      summaryEl.textContent = "";
-      summaryEl.hidden = true;
+      summaryEl.textContent = "0 PRODUCTS · 0 VARIANTS · " + formatMoney(0);
       return;
     }
-    var caseNotes = [];
-    lines.forEach(function (l) {
-      if (l.caseSize > 0 && l.quantity >= l.caseSize && l.quantity % l.caseSize === 0) {
-        caseNotes.push(l.quantity / l.caseSize + " case" + (l.quantity / l.caseSize === 1 ? "" : "s"));
-      }
-    });
-    var text = units + " unit" + (units === 1 ? "" : "s") + " · " + formatMoney(subtotal);
-    if (caseNotes.length > 0) text += " (" + caseNotes.join(", ") + ")";
+    var products = {};
+    lines.forEach(function (l) { if (l.product) products[l.product] = true; });
+    var productCount = Object.keys(products).length;
+
+    var text =
+      productCount + " PRODUCT" + (productCount === 1 ? "" : "S") +
+      " · " + lines.length + " VARIANT" + (lines.length === 1 ? "" : "S") +
+      " · " + formatMoney(subtotal);
     if (moqShort.length > 0) {
       text += " — " + moqShort.length + " item" + (moqShort.length === 1 ? "" : "s") + " below MOQ";
     } else if (orderMinimumCents !== null && subtotal < orderMinimumCents) {
       text += " — minimum " + formatMoney(orderMinimumCents);
     }
     summaryEl.textContent = text;
-    summaryEl.hidden = false;
+  }
+
+  /* -------------------------------------------------------------------------
+     Draft persistence — autosave quantities, prefill on load, order history
+     ---------------------------------------------------------------------- */
+
+  var saveTimer = null;
+  var saveStateEl = null;
+
+  function setSaveState(text) {
+    if (saveStateEl) saveStateEl.textContent = text;
+  }
+
+  function getPoNumber() {
+    var el = document.getElementById("wh-ls-po");
+    return el ? el.value.trim() : "";
+  }
+
+  function getShipOwnLabel() {
+    var el = document.getElementById("wh-ls-own-label");
+    return !!(el && el.checked);
+  }
+
+  function collectDraftPayload(content) {
+    var lines = getOrderLines(content);
+    var subtotal = 0;
+    lines.forEach(function (l) { subtotal += l.price * l.quantity; });
+    return {
+      lines: lines.map(function (l) {
+        return { variant_id: l.variant_id, quantity: l.quantity };
+      }),
+      subtotal_cents: subtotal,
+      po_number: getPoNumber(),
+      ship_own_label: getShipOwnLabel(),
+    };
+  }
+
+  function saveDraftNow(content) {
+    setSaveState("Saving…");
+    fetch("/apps/wholesale/linesheet-draft", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(collectDraftPayload(content)),
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        setSaveState("Draft saved");
+      })
+      .catch(function (err) {
+        setSaveState("Draft not saved — check connection");
+        console.error("[linesheet] draft save error:", err);
+      });
+  }
+
+  function scheduleDraftSave(content) {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () { saveDraftNow(content); }, 800);
+  }
+
+  function applyDraftLines(content, lines) {
+    if (!lines || lines.length === 0) return;
+    lines.forEach(function (l) {
+      var input = content.querySelector(
+        '.wh-ls-qty-input[data-variant-id="' + l.variant_id + '"]'
+      );
+      if (input) input.value = String(l.quantity);
+    });
+  }
+
+  function formatHistoryDate(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+  }
+
+  function renderHistory(historyEl, history, content, summaryEl) {
+    if (!historyEl) return;
+    if (!history || history.length === 0) {
+      historyEl.hidden = true;
+      return;
+    }
+    historyEl.textContent = "";
+
+    var title = document.createElement("p");
+    title.className = "wh-ls-history-title";
+    title.textContent = "Previous orders";
+    historyEl.appendChild(title);
+
+    history.forEach(function (h) {
+      var row = document.createElement("div");
+      row.className = "wh-ls-history-row";
+
+      var label = document.createElement("span");
+      label.textContent =
+        (h.order_name || "Order") +
+        " · " + formatHistoryDate(h.submitted_at) +
+        " · " + h.line_count + " item" + (h.line_count === 1 ? "" : "s") +
+        " · " + formatMoney(h.subtotal_cents);
+      row.appendChild(label);
+
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "wh-ls-btn wh-ls-btn--small";
+      btn.textContent = "Duplicate";
+      btn.addEventListener("click", function () {
+        var hasQuantities = getOrderLines(content).length > 0;
+        if (
+          hasQuantities &&
+          !window.confirm("Replace the quantities currently on your sheet with this order?")
+        ) {
+          return;
+        }
+        btn.disabled = true;
+        fetch("/apps/wholesale/linesheet-duplicate", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ draft_id: h.id }),
+        })
+          .then(function (r) {
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            return r.json();
+          })
+          .then(function (data) {
+            content.querySelectorAll(".wh-ls-qty-input").forEach(function (i) { i.value = ""; });
+            applyDraftLines(content, data.lines);
+            updateSummary(content, summaryEl);
+            setSaveState("Draft saved");
+            btn.disabled = false;
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          })
+          .catch(function (err) {
+            btn.disabled = false;
+            setSaveState("Could not duplicate order");
+            console.error("[linesheet] duplicate error:", err);
+          });
+      });
+      row.appendChild(btn);
+
+      historyEl.appendChild(row);
+    });
+
+    historyEl.hidden = false;
+  }
+
+  function loadDraftAndHistory(content, summaryEl, historyEl, prefill) {
+    fetch("/apps/wholesale/linesheet-draft", { credentials: "same-origin" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        if (data.customer) {
+          var nameEl = document.getElementById("wh-ls-cust-name");
+          var companyEl = document.getElementById("wh-ls-cust-company");
+          var emailEl = document.getElementById("wh-ls-cust-email");
+          if (nameEl) nameEl.textContent = data.customer.name || "—";
+          if (companyEl) companyEl.textContent = data.customer.company || "—";
+          if (emailEl) emailEl.textContent = data.customer.email || "—";
+        }
+        if (prefill && data.draft) {
+          if (data.draft.lines) applyDraftLines(content, data.draft.lines);
+          var poEl = document.getElementById("wh-ls-po");
+          if (poEl && data.draft.po_number) poEl.value = data.draft.po_number;
+          var ownEl = document.getElementById("wh-ls-own-label");
+          if (ownEl) ownEl.checked = !!data.draft.ship_own_label;
+          updateSummary(content, summaryEl);
+          if (data.draft.lines && data.draft.lines.length > 0) setSaveState("Draft restored");
+        }
+        renderHistory(historyEl, data.history, content, summaryEl);
+      })
+      .catch(function (err) {
+        // Draft persistence is an enhancement — the sheet still works without it.
+        console.error("[linesheet] draft load error:", err);
+      });
   }
 
   function showOrderResult(resultEl, ok, message, invoiceUrl) {
@@ -314,7 +643,7 @@
     resultEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 
-  function submitOrder(content, submitBtn, summaryEl, resultEl) {
+  function submitOrder(content, submitBtn, summaryEl, resultEl, historyEl) {
     var lines = getOrderLines(content);
     if (lines.length === 0) {
       showOrderResult(resultEl, false, "Enter quantities before submitting.");
@@ -362,6 +691,8 @@
         lines: lines.map(function (l) {
           return { variant_id: l.variant_id, quantity: l.quantity };
         }),
+        po_number: getPoNumber(),
+        ship_own_label: getShipOwnLabel(),
       }),
     })
       .then(function (r) {
@@ -379,13 +710,30 @@
       })
       .then(function (data) {
         if (!data || !data.ok) throw new Error((data && data.error) || "Order failed");
-        var msg = "Order " + (data.order_name || "") + " submitted (" +
-          formatMoney(data.subtotal_cents) + ")." +
-          (data.payment_terms === "NET_30" ? " Payment terms: Net 30." :
-           data.payment_terms === "NET_60" ? " Payment terms: Net 60." : "");
+        var msg;
+        if (data.all_backorder) {
+          msg = "Backorder " + (data.order_name || "") + " submitted (" +
+            formatMoney(data.subtotal_cents) + "). Everything on this order is " +
+            "currently out of stock — we'll send your invoice when it's ready to ship.";
+        } else {
+          msg = "Order " + (data.order_name || "") + " submitted (" +
+            formatMoney(data.subtotal_cents) + ")." +
+            (data.payment_terms === "NET_30" ? " Payment terms: Net 30." :
+             data.payment_terms === "NET_60" ? " Payment terms: Net 60." : "");
+          if (data.backorder_name) {
+            msg += " " + data.backorder_count + " out-of-stock item" +
+              (data.backorder_count === 1 ? " is" : "s are") +
+              " on separate backorder " + data.backorder_name +
+              " — we'll invoice that when it ships.";
+          }
+        }
         showOrderResult(resultEl, true, msg, data.invoice_url);
         content.querySelectorAll(".wh-ls-qty-input").forEach(function (i) { i.value = ""; });
         updateSummary(content, summaryEl);
+        // Server flipped the draft to SUBMITTED — refresh history, clear state.
+        if (saveTimer) clearTimeout(saveTimer);
+        setSaveState("");
+        loadDraftAndHistory(content, summaryEl, historyEl, false);
         submitBtn.disabled = false;
         submitBtn.textContent = original;
       })
@@ -443,10 +791,13 @@
     var content   = document.getElementById("wh-linesheet-content");
     var loading   = document.getElementById("wh-linesheet-loading");
     var printBtn  = document.getElementById("wh-ls-print");
-    var dlBtn     = document.getElementById("wh-ls-download");
+    var exportBtn = document.getElementById("wh-ls-export");
+    var exportMenu = document.getElementById("wh-ls-export-menu");
     var submitBtn = document.getElementById("wh-ls-submit-order");
     var summaryEl = document.getElementById("wh-ls-summary");
     var resultEl  = document.getElementById("wh-ls-order-result");
+    var historyEl = document.getElementById("wh-ls-history");
+    saveStateEl   = document.getElementById("wh-ls-save-state");
 
     if (!content) return;
 
@@ -469,14 +820,29 @@
         return;
       }
 
+      lastData = data;
+      rebuildVariantProductMap(data);
       content.innerHTML = buildHTML(data);
       content.removeAttribute("hidden");
+      wireSorting(content);
+      updateSummary(content, summaryEl); // show the zeroed totals immediately
+
+      // Pin the totals bar just below the site's sticky header.
+      var stickyBar = document.querySelector(".wh-ls-sticky");
+      var siteHeader = document.querySelector(".header-wrapper");
+      if (stickyBar && siteHeader) {
+        stickyBar.style.top = siteHeader.offsetHeight + "px";
+      }
+
+      // Restore the saved draft into the qty inputs + render order history.
+      loadDraftAndHistory(content, summaryEl, historyEl, true);
 
       // Wire qty inputs → live summary (subtotal, MOQ shortfalls, minimum)
       content.addEventListener("input", function (e) {
         if (e.target && e.target.classList.contains("wh-ls-qty-input")) {
           if (submitBtn) submitBtn.__whCaseNudged = false;
           updateSummary(content, summaryEl);
+          scheduleDraftSave(content);
         }
       });
 
@@ -495,19 +861,44 @@
         input.value = String(Math.floor(current / caseSize) * caseSize + caseSize);
         if (submitBtn) submitBtn.__whCaseNudged = false;
         updateSummary(content, summaryEl);
+        scheduleDraftSave(content);
       });
+
+      // PO input + own-label checkbox autosave with the draft
+      var poEl = document.getElementById("wh-ls-po");
+      if (poEl) poEl.addEventListener("input", function () { scheduleDraftSave(content); });
+      var ownEl = document.getElementById("wh-ls-own-label");
+      if (ownEl) ownEl.addEventListener("change", function () { scheduleDraftSave(content); });
 
       if (printBtn) {
         printBtn.addEventListener("click", function () { window.print(); });
       }
 
-      if (dlBtn) {
-        dlBtn.addEventListener("click", function () { downloadPDF(content, dlBtn); });
+      if (exportBtn && exportMenu) {
+        exportBtn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          var open = exportMenu.hidden;
+          exportMenu.hidden = !open;
+          exportBtn.setAttribute("aria-expanded", open ? "true" : "false");
+        });
+        document.addEventListener("click", function () {
+          exportMenu.hidden = true;
+          exportBtn.setAttribute("aria-expanded", "false");
+        });
+        exportMenu.addEventListener("click", function (e) {
+          var item = e.target && e.target.closest ? e.target.closest(".wh-ls-export-item") : null;
+          if (!item) return;
+          exportMenu.hidden = true;
+          var kind = item.getAttribute("data-export");
+          if (kind === "csv") downloadCSV(content);
+          if (kind === "pdf") downloadPDF(content, exportBtn);
+          if (kind === "gsheet") openGoogleSheet(content, resultEl);
+        });
       }
 
       if (submitBtn) {
         submitBtn.addEventListener("click", function () {
-          submitOrder(content, submitBtn, summaryEl, resultEl);
+          submitOrder(content, submitBtn, summaryEl, resultEl, historyEl);
         });
       }
     });

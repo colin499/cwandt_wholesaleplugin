@@ -40,7 +40,15 @@
     .price-item--sale,
     [class*="product__price"],
     [class*="ProductPrice"] {
-      visibility: hidden !important;
+      display: none !important;
+    }
+    /* Wholesale PDP is informational — ordering happens on the line sheet.
+       Hide the quantity selector and buy buttons (revealed again via
+       html.wh-show-retail when the product is NOT in the program). */
+    .product-form__quantity,
+    .product-form__buttons,
+    .product__inventory {
+      display: none !important;
     }
     /* Reveal retail again when wholesale.js determines this product is NOT
        in the wholesale program (no CMS prices). Without this, a wholesale
@@ -53,8 +61,11 @@
     html.wh-show-retail .price-item--regular,
     html.wh-show-retail .price-item--sale,
     html.wh-show-retail [class*="product__price"],
-    html.wh-show-retail [class*="ProductPrice"] {
-      visibility: visible !important;
+    html.wh-show-retail [class*="ProductPrice"],
+    html.wh-show-retail .product-form__quantity,
+    html.wh-show-retail .product-form__buttons,
+    html.wh-show-retail .product__inventory {
+      display: revert !important;
     }
   {% endstyle %}
 
@@ -73,20 +84,28 @@
     data-wh-product-id="{{ product.id }}"
     hidden
   >
-    <p class="wh-price-label">Wholesale Price</p>
-    <p class="wh-price-amount" id="wh-price-amount" aria-live="polite">—</p>
-    <p class="wh-price-moq" id="wh-price-moq" hidden></p>
-    <p class="wh-price-stock" id="wh-price-stock"></p>
+    <p class="wh-price-row" id="wh-row-msrp" hidden>
+      <span class="wh-price-key">MSRP</span><span class="wh-price-val" id="wh-price-msrp"></span>
+    </p>
+    <p class="wh-price-row">
+      <span class="wh-price-key">WHOLESALE</span><span class="wh-price-val" id="wh-price-amount" aria-live="polite">—</span>
+    </p>
+    <p class="wh-price-row" id="wh-row-moq" hidden>
+      <span class="wh-price-key">MOQ</span><span class="wh-price-val" id="wh-price-moq"></span>
+    </p>
+    <p class="wh-price-row" id="wh-row-case" hidden>
+      <span class="wh-price-key">CASE SIZE</span><span class="wh-price-val" id="wh-price-case"></span>
+    </p>
+    <p class="wh-price-row" id="wh-row-stock" hidden>
+      <span class="wh-price-key">STOCK</span><span class="wh-price-val" id="wh-price-stock"></span>
+    </p>
     <p class="wh-price-discount-note" id="wh-discount-note"></p>
-  </div>
-
-  {% comment %}
-    Skeleton shown while prices are fetching.
-    Hidden immediately if JS determines this isn't a wholesale customer.
-  {% endcomment %}
-  <div class="wh-price-skeleton" aria-hidden="true">
-    <span class="wh-skeleton-bar"></span>
-    <span class="wh-skeleton-bar"></span>
+    <a
+      class="wh-linesheet-link"
+      href="{{ block.settings.linesheet_url | default: '/pages/linesheet' }}"
+      target="_blank"
+      rel="noopener"
+    >Order on Linesheet &rarr;</a>
   </div>
 
 {% else %}
@@ -102,7 +121,14 @@
 {
   "name": "Wholesale Price Display",
   "target": "section",
-  "settings": [],
+  "settings": [
+    {
+      "type": "url",
+      "id": "linesheet_url",
+      "label": "Linesheet page URL",
+      "info": "Where 'Order on Linesheet' links to. Defaults to /pages/linesheet."
+    }
+  ],
   "templates": ["product", "page"]
 }
 {% endschema %}

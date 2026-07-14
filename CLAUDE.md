@@ -137,6 +137,23 @@ used for order records — not storefront prices.
 The program is managed in the CMS: cms.cwandt.com → Wholesale (list, add
 products with per-variant prices/MOQ at the 50%/30% tier presets, remove).
 
+## Linesheet-Centric Ordering (2026-07-13)
+
+**The linesheet is the ONLY wholesale ordering surface.** The theme cart is
+never repriced (no discount function) — for wholesale customers the PDP is
+purely informational: `wholesale-price.liquid` hides `.product-form__quantity`
+and `.product-form__buttons` (revealed again via `html.wh-show-retail` on
+non-program products) and shows an MSRP/WHOLESALE/MOQ table plus an
+"Order on Linesheet →" link (block setting `linesheet_url`, default
+`/pages/linesheet`, opens a new tab).
+
+Linesheet drafts persist in `LinesheetDraft` (one active DRAFT per customer,
+autosaved ~800ms after edits via POST `/apps/wholesale/linesheet-draft`;
+GET returns draft + last 10 SUBMITTED sheets). Submitting flips the row to
+SUBMITTED (order name + Shopify draft order id) — customers duplicate any
+submitted sheet into a fresh draft (POST `/apps/wholesale/linesheet-duplicate`).
+Admin view: /app/linesheets ("Order Sheets" nav).
+
 ## Key Decisions
 
 | Decision | Choice | Why |

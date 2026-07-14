@@ -242,8 +242,14 @@
     var block    = document.getElementById("wh-price-block");
     var skeleton = document.querySelector(".wh-price-skeleton"); // sibling of the block, not a child
     var priceEl  = document.getElementById("wh-price-amount");
+    var msrpEl   = document.getElementById("wh-price-msrp");
+    var msrpRow  = document.getElementById("wh-row-msrp");
     var moqEl    = document.getElementById("wh-price-moq");
+    var moqRow   = document.getElementById("wh-row-moq");
+    var caseEl   = document.getElementById("wh-price-case");
+    var caseRow  = document.getElementById("wh-row-case");
     var stockEl  = document.getElementById("wh-price-stock");
+    var stockRow = document.getElementById("wh-row-stock");
     var noteEl   = document.getElementById("wh-discount-note");
 
     if (!block || !variantsData) return;
@@ -262,8 +268,10 @@
     if (!variant && !selectedVariantId) variant = variantsData[0];
     if (!variant) {
       if (priceEl) priceEl.textContent = "—";
-      if (moqEl) moqEl.setAttribute("hidden", "");
-      if (stockEl) { stockEl.textContent = ""; stockEl.className = "wh-price-stock"; }
+      if (msrpRow) msrpRow.setAttribute("hidden", "");
+      if (moqRow) moqRow.setAttribute("hidden", "");
+      if (caseRow) caseRow.setAttribute("hidden", "");
+      if (stockRow) stockRow.setAttribute("hidden", "");
       if (noteEl) noteEl.textContent = "This option is not available for wholesale.";
       var unavailForm = block.querySelector(".wh-backorder-form");
       if (unavailForm) unavailForm.setAttribute("hidden", "");
@@ -274,17 +282,28 @@
 
     if (priceEl) priceEl.textContent = formatMoney(variant.wh_price);
 
-    if (moqEl) {
-      var moqText = variant.moq > 1 ? "Minimum order: " + variant.moq + " units" : "";
-      if (variant.case_size && variant.case_size > 1) {
-        moqText += (moqText ? " · " : "") + "Ships in cases of " + variant.case_size;
-      }
-      if (moqText) {
-        moqEl.textContent = moqText;
-        moqEl.removeAttribute("hidden");
+    if (msrpEl && msrpRow) {
+      if (variant.retail_price > 0) {
+        msrpEl.textContent = formatMoney(variant.retail_price);
+        msrpRow.removeAttribute("hidden");
       } else {
-        moqEl.setAttribute("hidden", "");
+        msrpRow.setAttribute("hidden", "");
       }
+    }
+
+    if (moqEl && moqRow) {
+      if (variant.moq > 1) {
+        moqEl.textContent = variant.moq + " UNITS";
+        moqRow.removeAttribute("hidden");
+      } else {
+        moqRow.setAttribute("hidden", "");
+      }
+    }
+
+    if (caseEl && caseRow) {
+      caseEl.textContent =
+        variant.case_size && variant.case_size > 1 ? String(variant.case_size) : "N/A";
+      caseRow.removeAttribute("hidden");
     }
 
     // Enforce the MOQ on the theme's quantity input: floor at the MOQ and
@@ -296,18 +315,21 @@
 
     var isOutOfStock = !variant.available || variant.in_stock <= 0;
 
-    if (stockEl) {
+    if (stockEl && stockRow) {
       if (isOutOfStock) {
-        stockEl.textContent = "Out of stock";
-        stockEl.className = "wh-price-stock wh-price-stock--out";
+        stockEl.textContent = "OUT OF STOCK";
+      } else if (variant.in_stock > 10) {
+        stockEl.textContent = "10+"; // mirrors the theme's own inventory display
       } else {
-        stockEl.textContent = "";
-        stockEl.className = "wh-price-stock";
+        stockEl.textContent = String(variant.in_stock);
       }
+      stockRow.removeAttribute("hidden");
     }
 
     if (noteEl) {
-      noteEl.textContent = variant.discount_percent + "% off retail";
+      // Clear any leftover message (e.g. "not available for wholesale" from a
+      // previous variant selection). No discount note is shown by design.
+      noteEl.textContent = "";
     }
 
     // Backorder button — show when out of stock, hide when in stock

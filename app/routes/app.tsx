@@ -22,6 +22,7 @@ export default function App() {
         <a href="/app/applications">Applications</a>
         <a href="/app/pricing">Pricing Rules</a>
         <a href="/app/backorders">Backorders</a>
+        <a href="/app/linesheets">Order Sheets</a>
         <a href="/app/cms-sync">CMS Sync</a>
         <a href="/app/settings">Settings</a>
       </NavMenu>
