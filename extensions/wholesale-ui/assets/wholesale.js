@@ -29,15 +29,6 @@
 
   var SK_STATUS = "wh_status";    // "1" | "0"
   var SK_PRICES = "wh_prices3_";  // + productId → JSON (v3: adds case_size)
-  var SK_CATALOG = "wh_catalog_"; // + handle → JSON (catalog-card price)
-
-  // Catalog-card "Wholesale $X" labels on collection/search/home pages.
-  // Targets the Horizon card structure (live DOM 2026-06-22):
-  //   • card root:  .product-card__content
-  //   • real price: <product-price> .price__regular > span.price   (e.g. "$1.00")
-  //   • label is inserted right after the <product-price> block (below retail,
-  //     in the card content area — never over the .card-gallery image).
-  var ENABLE_CATALOG_LABELS = true;
 
   /* -------------------------------------------------------------------------
      1. Determine wholesale status
@@ -462,147 +453,6 @@
   });
 
   /* -------------------------------------------------------------------------
-     9b. Catalog-card price labels (collection / search / home pages)
-         Shows "Wholesale $X" next to the retail price on each product card.
-         Append-only: never hides the theme's price, so no flicker and no
-         dependency on theme-specific price-hiding selectors.
-     ---------------------------------------------------------------------- */
-
-  // Find product cards on the page and the product handle each one links to.
-  // Horizon-first: each card is a `.product-card__content` whose price lives in a
-  // <product-price> element. We query the card roots directly (one entry per card,
-  // so no per-anchor duplicates), with a generic fallback for other themes.
-  function collectProductCards() {
-    var roots = document.querySelectorAll(".product-card__content");
-    if (roots.length === 0) {
-      // Fallback for non-Horizon themes: common grid/card containers.
-      roots = document.querySelectorAll(
-        'li.grid__item, .grid__item, .card-wrapper'
-      );
-    }
-
-    var cards = [];
-    for (var i = 0; i < roots.length; i++) {
-      var root = roots[i];
-      if (root.__whLabeled) continue;
-      // Skip the main product block on a PDP — handled by the price block.
-      if (root.querySelector("[data-wh-product-id]")) continue;
-
-      var link = root.querySelector('a[href*="/products/"]');
-      if (!link) continue;
-      var m = (link.getAttribute("href") || "").match(/\/products\/([^/?#]+)/);
-      if (!m) continue;
-
-      root.__whLabeled = true;
-      cards.push({ container: root, handle: decodeURIComponent(m[1]) });
-    }
-    return cards;
-  }
-
-  // Locate the card's visible retail price element.
-  function findCardPriceEl(container) {
-    // Horizon: <product-price> wraps the regular price in .price__regular .price.
-    var pp = container.querySelector("product-price");
-    if (pp) {
-      return pp.querySelector(".price__regular .price") || pp.querySelector(".price") || pp;
-    }
-    // Generic fallback: a leaf price element that isn't inside the media/gallery.
-    var candidates = container.querySelectorAll('[class*="price"]');
-    for (var i = candidates.length - 1; i >= 0; i--) {
-      var el = candidates[i];
-      if (el.querySelector('[class*="price"]')) continue; // prefer leaf-ish
-      if (el.closest('[class*="media"], [class*="gallery"], [class*="image"]')) continue;
-      if (/\d/.test(el.textContent || "")) return el;
-    }
-    return null;
-  }
-
-  function injectCardLabel(container, info) {
-    if (container.querySelector(".wh-card-price")) return;
-    var label = document.createElement("span");
-    label.className = "wh-card-price";
-    var prefix = info.varies ? "Wholesale from " : "Wholesale ";
-    label.textContent = prefix + formatMoney(info.wh_min, info.currency_code);
-
-    // Preferred (Horizon): place the label directly after the whole
-    // <product-price> block, so it sits below the retail price in the card's
-    // content area — never overlaying the image.
-    var pp = container.querySelector("product-price");
-    if (pp && pp.parentNode) {
-      pp.parentNode.insertBefore(label, pp.nextSibling);
-      return;
-    }
-
-    var priceEl = findCardPriceEl(container);
-    if (priceEl && priceEl.parentNode) {
-      priceEl.parentNode.insertBefore(label, priceEl.nextSibling);
-    } else {
-      container.appendChild(label); // safe fallback: end of card
-    }
-  }
-
-  // Batch-fetch wholesale prices for a list of handles, with per-handle cache.
-  function fetchCatalogPrices(handles, callback) {
-    var result = {};
-    var missing = [];
-    handles.forEach(function (h) {
-      var raw = sessionStorage.getItem(SK_CATALOG + h);
-      if (raw) {
-        try { result[h] = JSON.parse(raw); return; } catch (_) {}
-      }
-      missing.push(h);
-    });
-
-    if (missing.length === 0) { callback({ products: result }); return; }
-
-    // Chunk to stay under the endpoint's 50-handle cap.
-    var chunks = [];
-    for (var i = 0; i < missing.length; i += 50) chunks.push(missing.slice(i, i + 50));
-
-    Promise.all(
-      chunks.map(function (chunk) {
-        var url =
-          "/apps/wholesale/catalog-prices?handles=" +
-          encodeURIComponent(chunk.join(","));
-        return fetch(url, { credentials: "same-origin" })
-          .then(function (r) { return r.ok ? r.json() : null; })
-          .catch(function () { return null; });
-      })
-    ).then(function (responses) {
-      responses.forEach(function (data) {
-        if (!data || !data.products) return;
-        Object.keys(data.products).forEach(function (h) {
-          result[h] = data.products[h];
-          try { sessionStorage.setItem(SK_CATALOG + h, JSON.stringify(data.products[h])); } catch (_) {}
-        });
-      });
-      callback({ products: result });
-    });
-  }
-
-  function runCatalogLabels() {
-    // Never run on a product page — the price block owns the main product's
-    // wholesale price there. Without this, the catalog label is injected next to
-    // the theme's PDP price, duplicating the price block.
-    if (/\/products\//.test(window.location.pathname)) return;
-    if (document.querySelector("[data-wh-product-id]")) return;
-
-    var cards = collectProductCards();
-    if (cards.length === 0) return;
-
-    var handles = cards.map(function (c) { return c.handle; });
-    var unique = handles.filter(function (h, i) { return handles.indexOf(h) === i; });
-
-    fetchCatalogPrices(unique, function (data) {
-      if (!data || !data.products) return;
-      cards.forEach(function (c) {
-        var info = data.products[c.handle];
-        if (info) injectCardLabel(c.container, info);
-      });
-    });
-  }
-
-  /* -------------------------------------------------------------------------
      10. Main init
      ---------------------------------------------------------------------- */
 
@@ -658,7 +508,6 @@
         return;
       }
       runWholesaleUI();    // product-page price block
-      if (ENABLE_CATALOG_LABELS) runCatalogLabels(); // collection / search / home card labels
     });
   }
 

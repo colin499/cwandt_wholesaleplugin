@@ -9,9 +9,10 @@
   What it does on every page, for logged-in wholesale customers:
     1. Emits <meta name="wh-customer" content="1"> so wholesale.js knows the
        customer is wholesale instantly — no async status call, no price flash.
-    2. Loads wholesale.css + wholesale.js, which power:
-         • the product-page wholesale price block, and
-         • the "Wholesale $X" labels on collection / search / home product cards.
+    2. Loads wholesale.css + wholesale.js, which power the product-page
+       wholesale price block and the account-dropdown Orders link rewrite.
+       (Collection/search cards intentionally show no prices — matches the
+       theme's cards, which are image + title only.)
 
   wholesale.js is idempotent (window.__whWholesaleInit guard), so loading it here
   AND from the product-page price block on a PDP is safe.

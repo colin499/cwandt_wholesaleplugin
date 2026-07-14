@@ -106,25 +106,6 @@ const PRODUCT_QUERY = `
   }
 `;
 
-// Admin API query — fetches variant prices for a batch of products by handle.
-// Used by the catalog-card price labels (collection / search / home pages).
-const CATALOG_QUERY = `
-  query GetCatalogProducts($q: String!, $first: Int!) {
-    shop { currencyCode }
-    products(first: $first, query: $q) {
-      nodes {
-        id
-        handle
-        status
-        hiddenVariants: metafield(namespace: "custom", key: "wholesale_hidden_variants") { value }
-        variants(first: 100) {
-          nodes { id sku price availableForSale }
-        }
-      }
-    }
-  }
-`;
-
 // Admin API query — validates a single variant for backorder creation.
 const VARIANT_QUERY = `
   query GetVariantForBackorder($id: ID!) {
@@ -287,90 +268,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const session = await getWholesaleSession(shopifyCustomerId);
     if (!session) return notWholesale();
     return proxyJson({ wholesale: true, customerType: session.customerType });
-  }
-
-  // ── /apps/wholesale/catalog-prices ──────────────────────────────────────
-  // Batch wholesale "from" prices for product cards on collection/search/home
-  // pages. Input: ?handles=a,b,c (comma-separated, capped at 50). Returns the
-  // min wholesale price per product so the storefront can show "Wholesale $X"
-  // beside the retail price on each card. CMS-aware with flat-discount fallback.
-  if (subpath === "catalog-prices") {
-    const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");
-    const session = await getWholesaleSession(shopifyCustomerId);
-    if (!session) return notWholesale();
-
-    const handles = (url.searchParams.get("handles") ?? "")
-      .split(",")
-      .map((h) => h.trim())
-      .filter(Boolean)
-      .slice(0, 50);
-    if (handles.length === 0) return proxyJson({ wholesale: true, products: {} });
-
-    const shop = url.searchParams.get("shop");
-    if (!shop) return json({ error: "Missing shop param" }, { status: 400 });
-
-    // Shopify product query syntax: handle:a OR handle:b ...
-    const q = handles.map((h) => `handle:${h}`).join(" OR ");
-
-    let nodes: any[] = [];
-    let shopCurrency = "USD";
-    try {
-      const { admin } = await unauthenticated.admin(shop);
-      const result = await admin.graphql(CATALOG_QUERY, {
-        variables: { q, first: handles.length },
-      });
-      const body = await result.json();
-      nodes = body.data?.products?.nodes ?? [];
-      shopCurrency = body.data?.shop?.currencyCode ?? "USD";
-    } catch (err) {
-      console.error("[app-proxy/catalog-prices] Admin API error:", err);
-      return json({ error: "Failed to fetch catalog prices" }, { status: 502 });
-    }
-
-    const allVariantIds = nodes.flatMap((p: any) =>
-      p.variants.nodes.map((v: any) => ({
-        id: parseInt(v.id.split("/").pop(), 10),
-        sku: v.sku,
-      }))
-    );
-    const cmsMap = await getCmsVariantMap(allVariantIds);
-
-    // Only wholesale-available variants contribute; products with none are
-    // omitted from the response and get no card label (retail-only).
-    const products: Record<string, any> = {};
-    for (const p of nodes) {
-      const hiddenIds = parseHiddenVariantIds(p.hiddenVariants?.value);
-      const productActive = p.status === "ACTIVE";
-      let whMin = Infinity;
-      let whMax = -Infinity;
-      let retailMin = Infinity;
-      for (const v of p.variants.nodes) {
-        const variantId = String(v.id.split("/").pop());
-        const retailCents = Math.round(parseFloat(v.price) * 100);
-        const state = resolveVariantWholesale({
-          cms: cmsMap.get(variantId),
-          variantId,
-          hiddenVariantIds: hiddenIds,
-          productActive,
-          customerType: session.customerType,
-          retailCents,
-        });
-        if (!state.available) continue;
-        if (state.priceCents < whMin) whMin = state.priceCents;
-        if (state.priceCents > whMax) whMax = state.priceCents;
-        if (retailCents < retailMin) retailMin = retailCents;
-      }
-      if (whMin === Infinity) continue;
-      products[p.handle] = {
-        wh_min: whMin,
-        wh_max: whMax,
-        retail_min: retailMin === Infinity ? null : retailMin,
-        varies: whMax !== whMin,
-        currency_code: shopCurrency,
-      };
-    }
-
-    return proxyJson({ wholesale: true, currency_code: shopCurrency, products });
   }
 
   // ── /apps/wholesale/order-minimums ──────────────────────────────────────

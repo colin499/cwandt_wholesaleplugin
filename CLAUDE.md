@@ -119,8 +119,8 @@ available for wholesale iff (all three):
 
 Resolution lives in `resolveVariantWholesale()` / `parseHiddenVariantIds()`
 in `app/lib/cms-client.server.ts` and is applied by every App Proxy endpoint
-(prices, catalog-prices, linesheet-data, backorder). **There is no fallback
-price** — not in the CMS means not wholesale: no price shown, no card label,
+(prices, linesheet-data, orders, backorder). **There is no fallback
+price** — not in the CMS means not wholesale: no price shown,
 not on the line sheet, backorder rejected. On the PDP, `wholesale.js` reveals
 the theme's retail price (`html.wh-show-retail`) when a product isn't in the
 program, since the price block's CSS pre-emptively hides retail for wholesale
@@ -136,6 +136,12 @@ used for order records — not storefront prices.
 
 The program is managed in the CMS: cms.cwandt.com → Wholesale (list, add
 products with per-variant prices/MOQ at the 50%/30% tier presets, remove).
+
+**Catalog-card "Wholesale $X" labels — REMOVED (2026-07-14, by request).** The
+theme's collection/search cards are image + title only (no retail price), and
+Taylor wants them kept that way. The card-label JS in wholesale.js, the
+`/apps/wholesale/catalog-prices` endpoint, and `.wh-card-price` CSS were all
+deleted. Do not reintroduce card price labels.
 
 ## Linesheet-Centric Ordering (2026-07-13)
 
