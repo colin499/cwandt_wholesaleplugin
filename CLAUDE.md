@@ -148,11 +148,22 @@ non-program products) and shows an MSRP/WHOLESALE/MOQ table plus an
 `/pages/linesheet`, opens a new tab).
 
 Linesheet drafts persist in `LinesheetDraft` (one active DRAFT per customer,
-autosaved ~800ms after edits via POST `/apps/wholesale/linesheet-draft`;
-GET returns draft + last 10 SUBMITTED sheets). Submitting flips the row to
-SUBMITTED (order name + Shopify draft order id) — customers duplicate any
-submitted sheet into a fresh draft (POST `/apps/wholesale/linesheet-duplicate`).
+autosaved ~800ms after edits via POST `/apps/wholesale/linesheet-draft`).
+Submitting flips the row to SUBMITTED (order name + Shopify draft order id).
 Admin view: /app/linesheets ("Order Sheets" nav).
+
+**Customer order history lives on its own Orders page** (2026-07-14): theme
+block `wholesale-orders.liquid` + `orders.js` on `/pages/orders` (linked from
+`wholesale-nav` and a "Previous orders →" link on the sheet). GET
+`/apps/wholesale/orders` lists SUBMITTED sheets with live status derived from
+the stored Shopify draft order id (SUBMITTED → INVOICE_SENT → PREPARING →
+PARTIALLY_SHIPPED → SHIPPED / CANCELLED; display copy is the STATUS_TEXT map
+in orders.js); `?id=` returns line detail (unit prices are *current* CMS
+prices — stored subtotal is as-submitted). "Reorder" copies a sheet into the
+active draft via the existing POST `/apps/wholesale/linesheet-duplicate` and
+redirects to the sheet, which prefills from the draft. Note: a split
+stock+backorder submission stores only the primary draft order id, so status
+tracks the payable order.
 
 ## Key Decisions
 

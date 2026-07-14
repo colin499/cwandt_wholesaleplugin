@@ -201,6 +201,69 @@ async function upsertActiveDraft(
   return db.linesheetDraft.create({ data: { shopifyCustomerId, ...data } });
 }
 
+// Customer-facing status of a submitted sheet, derived from its Shopify draft
+// order. Status keys (display copy lives in orders.js): SUBMITTED (draft still
+// open, not yet invoiced) → INVOICE_SENT → PREPARING (order created, not yet
+// fulfilled) → PARTIALLY_SHIPPED → SHIPPED; CANCELLED if the order was
+// cancelled. Sheets whose lookup fails fall back to SUBMITTED.
+async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
+  const map = new Map<
+    string,
+    {
+      key: string;
+      invoiceUrl: string | null;
+      tracking: Array<{ number: string | null; url: string | null }>;
+    }
+  >();
+  if (draftOrderIds.length === 0) return map;
+  try {
+    const res = await admin.graphql(
+      `query OrderSheetStatuses($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on DraftOrder {
+            id
+            status
+            invoiceUrl
+            order {
+              cancelledAt
+              displayFulfillmentStatus
+              fulfillments(first: 10) {
+                trackingInfo(first: 5) { number url }
+              }
+            }
+          }
+        }
+      }`,
+      { variables: { ids: draftOrderIds.map((id) => `gid://shopify/DraftOrder/${id}`) } }
+    );
+    const body = await res.json();
+    for (const node of body.data?.nodes ?? []) {
+      if (!node?.id) continue;
+      const numericId = String(node.id.split("/").pop());
+      const order = node.order;
+      let key = "SUBMITTED";
+      const tracking: Array<{ number: string | null; url: string | null }> = [];
+      if (order) {
+        for (const f of order.fulfillments ?? []) {
+          for (const t of f.trackingInfo ?? []) {
+            if (t.number || t.url) tracking.push({ number: t.number, url: t.url });
+          }
+        }
+        if (order.cancelledAt) key = "CANCELLED";
+        else if (order.displayFulfillmentStatus === "FULFILLED") key = "SHIPPED";
+        else if (order.displayFulfillmentStatus === "PARTIALLY_FULFILLED") key = "PARTIALLY_SHIPPED";
+        else key = "PREPARING";
+      } else if (node.status === "INVOICE_SENT") {
+        key = "INVOICE_SENT";
+      }
+      map.set(numericId, { key, invoiceUrl: node.invoiceUrl ?? null, tracking });
+    }
+  } catch (err) {
+    console.error("[app-proxy/orders] status lookup failed:", err);
+  }
+  return map;
+}
+
 // ── GET handler ──────────────────────────────────────────────────────────────
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -599,6 +662,152 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         line_count: parseDraftLines(h.lines).length,
         submitted_at: h.updatedAt,
       })),
+    });
+  }
+
+  // ── /apps/wholesale/orders ──────────────────────────────────────────────
+  // Order history for the storefront Orders page. Without ?id= returns the
+  // customer's submitted sheets (newest first) with live status from Shopify;
+  // with ?id=<sheet id> returns one sheet with enriched line detail.
+  if (subpath === "orders") {
+    const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");
+    const session = await getWholesaleSession(shopifyCustomerId);
+    if (!session) return json({ wholesale: false }, { status: 403 });
+
+    const shop = url.searchParams.get("shop");
+    if (!shop) return json({ error: "Missing shop param" }, { status: 400 });
+    const { admin } = await unauthenticated.admin(shop);
+
+    const detailId = url.searchParams.get("id");
+    if (detailId) {
+      const sheet = await db.linesheetDraft.findFirst({
+        where: {
+          id: detailId,
+          shopifyCustomerId: session.shopifyCustomerId,
+          status: "SUBMITTED",
+        },
+      });
+      if (!sheet) return json({ error: "Order sheet not found" }, { status: 404 });
+
+      const lines = parseDraftLines(sheet.lines);
+      const statusMap = await fetchDraftOrderStatuses(
+        admin,
+        sheet.shopifyDraftOrderId ? [sheet.shopifyDraftOrderId] : []
+      );
+      const st =
+        statusMap.get(sheet.shopifyDraftOrderId ?? "") ??
+        { key: "SUBMITTED", invoiceUrl: null, tracking: [] };
+
+      // Enrich lines with current catalog info. Unit prices are today's
+      // wholesale prices (null if the variant left the program) — the
+      // sheet-level subtotal is the stored as-submitted amount, and the
+      // Shopify invoice remains the financial source of truth.
+      let nodes: any[] = [];
+      if (lines.length > 0) {
+        try {
+          const res = await admin.graphql(
+            `query OrderSheetVariants($ids: [ID!]!) {
+              nodes(ids: $ids) {
+                ... on ProductVariant {
+                  id
+                  title
+                  sku
+                  price
+                  image { url }
+                  product {
+                    title
+                    handle
+                    status
+                    featuredImage { url }
+                    hiddenVariants: metafield(namespace: "custom", key: "wholesale_hidden_variants") { value }
+                  }
+                }
+              }
+            }`,
+            { variables: { ids: lines.map((l) => `gid://shopify/ProductVariant/${l.variant_id}`) } }
+          );
+          const body = await res.json();
+          nodes = (body.data?.nodes ?? []).filter(Boolean);
+        } catch (err) {
+          console.error("[app-proxy/orders] variant lookup failed:", err);
+        }
+      }
+      const nodeById = new Map(nodes.map((n: any) => [String(n.id.split("/").pop()), n]));
+      const cmsMap = await getCmsVariantMap(
+        lines.map((l) => ({ id: l.variant_id, sku: nodeById.get(String(l.variant_id))?.sku }))
+      );
+
+      return proxyJson({
+        wholesale: true,
+        order: {
+          id: sheet.id,
+          order_name: sheet.orderName || "—",
+          po_number: sheet.poNumber || "",
+          ship_own_label: sheet.shipOwnLabel,
+          submitted_at: sheet.updatedAt,
+          subtotal_cents: sheet.subtotalCents,
+          status: st.key,
+          invoice_url: st.invoiceUrl,
+          tracking: st.tracking,
+          lines: lines.map((l) => {
+            const node = nodeById.get(String(l.variant_id));
+            let unitPriceCents: number | null = null;
+            if (node) {
+              const retailCents = Math.round(parseFloat(node.price) * 100);
+              const state = resolveVariantWholesale({
+                cms: cmsMap.get(String(l.variant_id)),
+                variantId: String(l.variant_id),
+                hiddenVariantIds: parseHiddenVariantIds(node.product?.hiddenVariants?.value),
+                productActive: node.product?.status === "ACTIVE",
+                customerType: session.customerType,
+                retailCents,
+              });
+              if (state.available) unitPriceCents = state.priceCents;
+            }
+            return {
+              variant_id: l.variant_id,
+              quantity: l.quantity,
+              product_title: node?.product?.title ?? `Item ${l.variant_id}`,
+              variant_title: node && node.title !== "Default Title" ? node.title : "",
+              sku: node?.sku ?? "",
+              image_url: node?.image?.url ?? node?.product?.featuredImage?.url ?? null,
+              unit_price_cents: unitPriceCents,
+            };
+          }),
+        },
+      });
+    }
+
+    const sheets = await db.linesheetDraft.findMany({
+      where: { shopifyCustomerId: session.shopifyCustomerId, status: "SUBMITTED" },
+      orderBy: { updatedAt: "desc" },
+      take: 100,
+    });
+    const statusMap = await fetchDraftOrderStatuses(
+      admin,
+      sheets.map((s) => s.shopifyDraftOrderId).filter((id): id is string => !!id)
+    );
+
+    return proxyJson({
+      wholesale: true,
+      orders: sheets.map((s) => {
+        const lines = parseDraftLines(s.lines);
+        const st =
+          statusMap.get(s.shopifyDraftOrderId ?? "") ??
+          { key: "SUBMITTED", invoiceUrl: null, tracking: [] };
+        return {
+          id: s.id,
+          order_name: s.orderName || "—",
+          po_number: s.poNumber || "",
+          submitted_at: s.updatedAt,
+          subtotal_cents: s.subtotalCents,
+          line_count: lines.length,
+          item_count: lines.reduce((n, l) => n + l.quantity, 0),
+          status: st.key,
+          invoice_url: st.invoiceUrl,
+          tracking: st.tracking,
+        };
+      }),
     });
   }
 

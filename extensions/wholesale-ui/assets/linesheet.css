@@ -10,14 +10,8 @@
    -------------------------------------------------------------------------- */
 .wh-linesheet {
   max-width: 100%;
-  padding: 24px 40px 0;
+  padding: 20px;
   color: #000;
-}
-
-@media (max-width: 749px) {
-  .wh-linesheet {
-    padding: 16px 16px 0;
-  }
 }
 
 #wh-linesheet-content {
@@ -26,7 +20,7 @@
 
 .wh-ls-header {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 24px;
@@ -48,14 +42,14 @@
 }
 
 /* --------------------------------------------------------------------------
-   Toolbar buttons + export menu
+   Toolbar buttons + export menu (Print / Export / Submit live in the sticky bar)
    -------------------------------------------------------------------------- */
-.wh-ls-actions {
+.wh-ls-sticky-actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   flex-shrink: 0;
   align-items: center;
-  margin-top: 14px;
+  margin-left: auto;
 }
 
 /* --------------------------------------------------------------------------
@@ -303,11 +297,11 @@
   z-index: 20;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
   padding: 10px 0;
   margin-bottom: 16px;
   background: #fff;
+  flex-wrap: wrap;
 }
 
 .wh-ls-summary {
@@ -320,6 +314,10 @@
   font-size: 12px;
   white-space: nowrap;
   text-transform: uppercase;
+}
+
+.wh-ls-save-state:empty {
+  display: none;
 }
 
 /* --------------------------------------------------------------------------
@@ -400,28 +398,62 @@
 .wh-ls-case-btn:hover { background: #000; color: #fff; }
 
 /* --------------------------------------------------------------------------
-   Previous-orders history
+   Orders page (wholesale-orders block) — list of submitted sheets with
+   expandable detail. Reuses the .wh-ls-table look.
    -------------------------------------------------------------------------- */
-.wh-ls-history {
-  margin: 12px 0 20px;
-  padding: 12px 16px;
-  border: 1px solid #000;
+.wh-orders-table {
+  table-layout: auto;
 }
 
-.wh-ls-history-title {
-  margin: 0 0 8px;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+.wh-orders-row {
+  cursor: pointer;
 }
 
-.wh-ls-history-row {
+.wh-orders-row:hover td {
+  background: #f5f5f5;
+}
+
+.wh-orders-detail > td {
+  padding: 14px 12px;
+  cursor: default;
+}
+
+.wh-orders-detail-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 4px 0;
-  font-size: 13px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.wh-orders-detail-head a {
+  color: #000;
+}
+
+.wh-orders-detail-table {
+  table-layout: auto;
+  margin-bottom: 10px;
+}
+
+.wh-orders-detail-foot {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.wh-ls-orders-link {
+  margin: 20px 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.wh-ls-orders-link a {
+  color: #000;
 }
 
 .wh-ls-btn--small {

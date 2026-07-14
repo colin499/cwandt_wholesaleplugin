@@ -150,7 +150,16 @@
 }
 
 .wh-nav-item {
-  /* Inherits theme nav link styles */
+  /* Inherits theme nav link styles, minus the hover underline */
+}
+
+/* No hover underline on wholesale header links — including the theme's own
+   "WHOLESALE : NAME" account-dropdown trigger (.wh-account, theme markup). */
+.wh-nav-item:hover,
+.wh-nav-item:focus,
+.wh-account:hover,
+.wh-account:focus {
+  text-decoration: none !important;
 }
 
 .wh-nav-separator {

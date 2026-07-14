@@ -16,7 +16,7 @@
 
   <nav class="wh-nav-items" aria-label="Wholesale navigation">
     <a
-      href="/account"
+      href="{{ block.settings.orders_url | default: '/pages/orders' }}"
       class="wh-nav-item"
       aria-label="View wholesale order history"
     >
@@ -54,6 +54,12 @@
       "id": "orders_label",
       "label": "Orders link label",
       "default": "Wholesale Orders"
+    },
+    {
+      "type": "text",
+      "id": "orders_url",
+      "label": "Orders page URL",
+      "default": "/pages/orders"
     },
     {
       "type": "text",

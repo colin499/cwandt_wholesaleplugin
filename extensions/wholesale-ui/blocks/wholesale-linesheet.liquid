@@ -10,7 +10,18 @@
   which linesheet.js reads to confirm wholesale status without an async call).
 {% endcomment %}
 
-{% if customer and customer.tags contains 'wholesale' %}
+{% liquid
+  # Render for wholesale customers — and in the theme editor (design_mode),
+  # where no customer is logged in, so the block stays visible and selectable.
+  assign wh_show = false
+  if customer and customer.tags contains 'wholesale'
+    assign wh_show = true
+  endif
+  if request.design_mode
+    assign wh_show = true
+  endif
+%}
+{% if wh_show %}
 
   {{ 'linesheet.css' | asset_url | stylesheet_tag }}
   <script src="{{ 'linesheet.js' | asset_url }}" defer></script>
@@ -21,20 +32,8 @@
 
     <div class="wh-ls-header wh-no-print">
       <div class="wh-ls-header-text">
-        <h1 class="wh-ls-title">{{ block.settings.title | default: 'CW&T Wholesale Linesheet' }}</h1>
+        <h1 class="wh-ls-title">CW&amp;T Wholesale Order Sheet</h1>
         <p class="wh-ls-subtitle">CONTACT : {{ block.settings.contact_email | default: 'hello@cwandt.com' }}</p>
-        <div class="wh-ls-actions">
-          <span id="wh-ls-save-state" class="wh-ls-save-state" aria-live="polite"></span>
-          <button type="button" class="wh-ls-btn" id="wh-ls-print">Print</button>
-          <div class="wh-ls-export-wrap">
-            <button type="button" class="wh-ls-btn" id="wh-ls-export" aria-haspopup="true" aria-expanded="false">Export &#9662;</button>
-            <div class="wh-ls-export-menu" id="wh-ls-export-menu" hidden>
-              <button type="button" class="wh-ls-export-item" data-export="csv">Download CSV</button>
-              <button type="button" class="wh-ls-export-item" data-export="pdf">Download PDF</button>
-              <button type="button" class="wh-ls-export-item" data-export="gsheet">Open in Google Sheets</button>
-            </div>
-          </div>
-        </div>
       </div>
 
       {% comment %}
@@ -65,8 +64,20 @@
       Counts and subtotal update as quantities change; submit lives here.
     {% endcomment %}
     <div class="wh-ls-sticky wh-no-print">
+      <span id="wh-ls-save-state" class="wh-ls-save-state" aria-live="polite"></span>
       <span id="wh-ls-summary" class="wh-ls-summary"></span>
-      <button type="button" class="wh-ls-btn wh-ls-btn--cart" id="wh-ls-submit-order">Submit Wholesale Order</button>
+      <div class="wh-ls-sticky-actions">
+        <button type="button" class="wh-ls-btn" id="wh-ls-print">Print</button>
+        <div class="wh-ls-export-wrap">
+          <button type="button" class="wh-ls-btn" id="wh-ls-export" aria-haspopup="true" aria-expanded="false">Export &#9662;</button>
+          <div class="wh-ls-export-menu" id="wh-ls-export-menu" hidden>
+            <button type="button" class="wh-ls-export-item" data-export="csv">Download CSV</button>
+            <button type="button" class="wh-ls-export-item" data-export="pdf">Download PDF</button>
+            <button type="button" class="wh-ls-export-item" data-export="gsheet">Open in Google Sheets</button>
+          </div>
+        </div>
+        <button type="button" class="wh-ls-btn wh-ls-btn--cart" id="wh-ls-submit-order">Submit Wholesale Order</button>
+      </div>
     </div>
 
     {% comment %} Print header — hidden on screen, visible when printing {% endcomment %}
@@ -83,8 +94,10 @@
 
     <div id="wh-linesheet-content" hidden></div>
 
-    {% comment %} Previous submitted order sheets — duplicate as a new draft {% endcomment %}
-    <div id="wh-ls-history" class="wh-ls-history wh-no-print" hidden></div>
+    {% comment %} Order history lives on its own page (wholesale-orders block) {% endcomment %}
+    <p class="wh-ls-orders-link wh-no-print">
+      <a href="{{ block.settings.orders_url | default: '/pages/orders' }}">Previous orders &rarr;</a>
+    </p>
 
   </div>
 
@@ -105,9 +118,9 @@
   "settings": [
     {
       "type": "text",
-      "id": "title",
-      "label": "Page Title",
-      "default": "CW&T Wholesale Linesheet"
+      "id": "orders_url",
+      "label": "Orders page URL (Previous orders link)",
+      "default": "/pages/orders"
     },
     {
       "type": "text",

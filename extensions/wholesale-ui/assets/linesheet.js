@@ -183,7 +183,7 @@
     return (
       '<th class="wh-ls-sortable' + (extraClass ? " " + extraClass : "") +
       '" data-sort-key="' + key + '"' + (numeric ? ' data-sort-numeric="1"' : "") +
-      ">" + label + ' <span class="wh-ls-sort" aria-hidden="true">&#9652;&#9662;</span></th>'
+      ">" + label + ' <span class="wh-ls-sort" aria-hidden="true">&#9662;</span></th>'
     );
   }
 
@@ -208,13 +208,13 @@
       html += "<thead><tr>";
       html += '<th class="wh-ls-col-img"></th>';
       html += sortableTh("Product", "product", false, "wh-ls-col-title");
-      html += sortableTh("Variant", "variant", false, "wh-ls-col-variant");
-      html += sortableTh("SKU", "sku", false);
+      html += '<th class="wh-ls-col-variant">Variant</th>';
+      html += "<th>SKU</th>";
       html += sortableTh("Retail", "retail", true);
-      html += sortableTh("Wholesale", "wholesale", true);
-      html += sortableTh("MOQ", "moq", true, "wh-ls-col-moq");
-      html += sortableTh("Stock", "stock", true, "wh-ls-col-stock");
-      html += '<th class="wh-ls-col-qty wh-no-print">Qty</th>';
+      html += "<th>Wholesale</th>";
+      html += '<th class="wh-ls-col-moq">MOQ</th>';
+      html += '<th class="wh-ls-col-stock">Stock</th>';
+      html += sortableTh("Qty", "qty", true, "wh-ls-col-qty wh-no-print");
       html += "</tr></thead>";
       html += "<tbody>";
 
@@ -272,17 +272,26 @@
           ths.forEach(function (other) {
             other.removeAttribute("data-sort-dir");
             var c = other.querySelector(".wh-ls-sort");
-            if (c) c.innerHTML = "&#9652;&#9662;";
+            if (c) c.innerHTML = "&#9662;";
           });
           th.setAttribute("data-sort-dir", dir);
           var caret = th.querySelector(".wh-ls-sort");
           if (caret) caret.innerHTML = dir === "asc" ? "&#9652;" : "&#9662;";
 
+          // Qty is a live input, not a data-* attribute — read its current value.
+          function rowValue(row) {
+            if (key === "qty") {
+              var input = row.querySelector(".wh-ls-qty-input");
+              return input ? input.value : "";
+            }
+            return row.getAttribute("data-" + key) || "";
+          }
+
           var tbody = table.querySelector("tbody");
           var rows = Array.prototype.slice.call(tbody.querySelectorAll("tr"));
           rows.sort(function (a, b) {
-            var av = a.getAttribute("data-" + key) || "";
-            var bv = b.getAttribute("data-" + key) || "";
+            var av = rowValue(a);
+            var bv = rowValue(b);
             var cmp = numeric
               ? (parseFloat(av) || 0) - (parseFloat(bv) || 0)
               : av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" });
@@ -433,7 +442,7 @@
     });
 
     if (lines.length === 0) {
-      summaryEl.textContent = "0 PRODUCTS · 0 VARIANTS · " + formatMoney(0);
+      summaryEl.textContent = "0 PRODUCTS · 0 VARIANTS · 0 ITEMS · " + formatMoney(0);
       return;
     }
     var products = {};
@@ -443,6 +452,7 @@
     var text =
       productCount + " PRODUCT" + (productCount === 1 ? "" : "S") +
       " · " + lines.length + " VARIANT" + (lines.length === 1 ? "" : "S") +
+      " · " + units + " ITEM" + (units === 1 ? "" : "S") +
       " · " + formatMoney(subtotal);
     if (moqShort.length > 0) {
       text += " — " + moqShort.length + " item" + (moqShort.length === 1 ? "" : "s") + " below MOQ";
@@ -520,83 +530,7 @@
     });
   }
 
-  function formatHistoryDate(iso) {
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
-  }
-
-  function renderHistory(historyEl, history, content, summaryEl) {
-    if (!historyEl) return;
-    if (!history || history.length === 0) {
-      historyEl.hidden = true;
-      return;
-    }
-    historyEl.textContent = "";
-
-    var title = document.createElement("p");
-    title.className = "wh-ls-history-title";
-    title.textContent = "Previous orders";
-    historyEl.appendChild(title);
-
-    history.forEach(function (h) {
-      var row = document.createElement("div");
-      row.className = "wh-ls-history-row";
-
-      var label = document.createElement("span");
-      label.textContent =
-        (h.order_name || "Order") +
-        " · " + formatHistoryDate(h.submitted_at) +
-        " · " + h.line_count + " item" + (h.line_count === 1 ? "" : "s") +
-        " · " + formatMoney(h.subtotal_cents);
-      row.appendChild(label);
-
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "wh-ls-btn wh-ls-btn--small";
-      btn.textContent = "Duplicate";
-      btn.addEventListener("click", function () {
-        var hasQuantities = getOrderLines(content).length > 0;
-        if (
-          hasQuantities &&
-          !window.confirm("Replace the quantities currently on your sheet with this order?")
-        ) {
-          return;
-        }
-        btn.disabled = true;
-        fetch("/apps/wholesale/linesheet-duplicate", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ draft_id: h.id }),
-        })
-          .then(function (r) {
-            if (!r.ok) throw new Error("HTTP " + r.status);
-            return r.json();
-          })
-          .then(function (data) {
-            content.querySelectorAll(".wh-ls-qty-input").forEach(function (i) { i.value = ""; });
-            applyDraftLines(content, data.lines);
-            updateSummary(content, summaryEl);
-            setSaveState("Draft saved");
-            btn.disabled = false;
-            window.scrollTo({ top: 0, behavior: "smooth" });
-          })
-          .catch(function (err) {
-            btn.disabled = false;
-            setSaveState("Could not duplicate order");
-            console.error("[linesheet] duplicate error:", err);
-          });
-      });
-      row.appendChild(btn);
-
-      historyEl.appendChild(row);
-    });
-
-    historyEl.hidden = false;
-  }
-
-  function loadDraftAndHistory(content, summaryEl, historyEl, prefill) {
+  function loadDraft(content, summaryEl, prefill) {
     fetch("/apps/wholesale/linesheet-draft", { credentials: "same-origin" })
       .then(function (r) {
         if (!r.ok) throw new Error("HTTP " + r.status);
@@ -620,7 +554,6 @@
           updateSummary(content, summaryEl);
           if (data.draft.lines && data.draft.lines.length > 0) setSaveState("Draft restored");
         }
-        renderHistory(historyEl, data.history, content, summaryEl);
       })
       .catch(function (err) {
         // Draft persistence is an enhancement — the sheet still works without it.
@@ -643,7 +576,7 @@
     resultEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 
-  function submitOrder(content, submitBtn, summaryEl, resultEl, historyEl) {
+  function submitOrder(content, submitBtn, summaryEl, resultEl) {
     var lines = getOrderLines(content);
     if (lines.length === 0) {
       showOrderResult(resultEl, false, "Enter quantities before submitting.");
@@ -730,10 +663,9 @@
         showOrderResult(resultEl, true, msg, data.invoice_url);
         content.querySelectorAll(".wh-ls-qty-input").forEach(function (i) { i.value = ""; });
         updateSummary(content, summaryEl);
-        // Server flipped the draft to SUBMITTED — refresh history, clear state.
+        // Server flipped the draft to SUBMITTED — clear autosave state.
         if (saveTimer) clearTimeout(saveTimer);
         setSaveState("");
-        loadDraftAndHistory(content, summaryEl, historyEl, false);
         submitBtn.disabled = false;
         submitBtn.textContent = original;
       })
@@ -787,7 +719,23 @@
      Main init
      ---------------------------------------------------------------------- */
 
+  // The theme's main Page section keeps a 600px min-height even when the page
+  // body is empty, pushing the app section to the bottom — collapse it. Only
+  // hides sections whose page content is truly empty, so adding body text to
+  // the page in Shopify Admin brings the section back.
+  function collapseEmptyPageSection() {
+    document.querySelectorAll(".shopify-section .page-content .rte").forEach(function (rte) {
+      if (rte.children.length === 0 && rte.textContent.trim() === "") {
+        var section = rte.closest(".shopify-section");
+        if (section && !section.querySelector(".wh-linesheet")) {
+          section.style.display = "none";
+        }
+      }
+    });
+  }
+
   function init() {
+    collapseEmptyPageSection();
     var content   = document.getElementById("wh-linesheet-content");
     var loading   = document.getElementById("wh-linesheet-loading");
     var printBtn  = document.getElementById("wh-ls-print");
@@ -796,7 +744,6 @@
     var submitBtn = document.getElementById("wh-ls-submit-order");
     var summaryEl = document.getElementById("wh-ls-summary");
     var resultEl  = document.getElementById("wh-ls-order-result");
-    var historyEl = document.getElementById("wh-ls-history");
     saveStateEl   = document.getElementById("wh-ls-save-state");
 
     if (!content) return;
@@ -834,8 +781,8 @@
         stickyBar.style.top = siteHeader.offsetHeight + "px";
       }
 
-      // Restore the saved draft into the qty inputs + render order history.
-      loadDraftAndHistory(content, summaryEl, historyEl, true);
+      // Restore the saved draft into the qty inputs.
+      loadDraft(content, summaryEl, true);
 
       // Wire qty inputs → live summary (subtotal, MOQ shortfalls, minimum)
       content.addEventListener("input", function (e) {
@@ -898,7 +845,7 @@
 
       if (submitBtn) {
         submitBtn.addEventListener("click", function () {
-          submitOrder(content, submitBtn, summaryEl, resultEl, historyEl);
+          submitOrder(content, submitBtn, summaryEl, resultEl);
         });
       }
     });

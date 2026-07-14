@@ -446,6 +446,22 @@
   });
 
   /* -------------------------------------------------------------------------
+     9a. Account dropdown → wholesale Orders page
+         The theme's account menu (.wh-account-menu) links "Orders" to Shopify's
+         hosted customer-accounts page. Wholesale customers order via draft
+         orders on the linesheet, so their history lives at /pages/orders
+         (wholesale-orders block) — repoint the link. This script only loads
+         for wholesale-tagged customers, so retail buyers keep the theme link.
+     ---------------------------------------------------------------------- */
+
+  document.querySelectorAll(".wh-account-menu a").forEach(function (a) {
+    var isOrdersLink =
+      a.textContent.trim().toLowerCase() === "orders" ||
+      /\/account\/orders\b/.test(a.getAttribute("href") || "");
+    if (isOrdersLink) a.setAttribute("href", "/pages/orders");
+  });
+
+  /* -------------------------------------------------------------------------
      9b. Catalog-card price labels (collection / search / home pages)
          Shows "Wholesale $X" next to the retail price on each product card.
          Append-only: never hides the theme's price, so no flicker and no
