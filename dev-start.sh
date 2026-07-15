@@ -18,4 +18,6 @@ sleep 1
 # Standard Shopify dev: the CLI manages one tunnel that serves BOTH the embedded app and the
 # extensions, and updates the app URLs in the Partner Dashboard automatically
 # (automatically_update_urls_on_dev = true). No custom proxy or --tunnel-url needed.
-exec npx shopify app dev
+# --config pins the DEV app explicitly — shopify.app.cwt-wholesale-production.toml
+# is the live app and must never be the target of `app dev`.
+exec npx shopify app dev --config shopify.app.toml

@@ -1,0 +1,59 @@
+# CW&T Wholesale — PRODUCTION app config (Fly.io hosting, live store install)
+# ---------------------------------------------------------------------------
+# This is a SEPARATE Shopify app from the dev one (shopify.app.toml). Fixed
+# fly.dev URLs — never run `shopify app dev` against this config; dev-start.sh
+# pins the dev config. Deploy config + extensions with:
+#   npx shopify app deploy --config cwt-wholesale-production
+# ---------------------------------------------------------------------------
+
+client_id = "90fd122fb3224545c83647f0f1b22681"
+name = "CW&T Wholesale Production"
+application_url = "https://cwandt-wholesale.fly.dev"
+embedded = true
+
+[build]
+include_config_on_deploy = true
+automatically_update_urls_on_dev = false
+
+[access_scopes]
+scopes = "read_customers,write_customers,read_products,write_products,read_orders,write_orders,read_inventory,write_inventory,read_draft_orders,write_draft_orders,read_shipping,write_shipping,read_discounts,write_discounts,read_price_rules,write_price_rules,read_payment_terms,write_payment_terms,read_delivery_customizations,write_delivery_customizations"
+
+[auth]
+redirect_urls = [
+  "https://cwandt-wholesale.fly.dev/auth/callback",
+  "https://cwandt-wholesale.fly.dev/auth/shopify/callback"
+]
+
+[webhooks]
+api_version = "2026-04"
+
+  # Same relative-URI subscriptions as dev — they resolve against
+  # application_url, which is fixed here.
+  [[webhooks.subscriptions]]
+  uri = "/webhooks"
+  topics = [
+    "products/create",
+    "products/update",
+    "inventory_levels/update",
+    "app/uninstalled",
+    "customers/create",
+    "customers/update",
+    "orders/create",
+    "orders/updated"
+  ]
+
+  [[webhooks.subscriptions]]
+  compliance_topics = [
+    "customers/data_request",
+    "customers/redact",
+    "shop/redact"
+  ]
+  uri = "/webhooks"
+
+[app_proxy]
+url = "https://cwandt-wholesale.fly.dev/app-proxy"
+subpath = "wholesale"
+prefix = "apps"
+
+[pos]
+embedded = false
