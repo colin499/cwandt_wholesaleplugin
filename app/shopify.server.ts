@@ -8,22 +8,31 @@ import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prism
 import { db } from "./db.server";
 
 // Called on every OAuth completion (install + re-auth).
-// Finds the deployed delivery customization function by handle and creates the
+// Finds the deployed delivery customization function and creates the
 // customization record if it doesn't already exist. Safe to call repeatedly —
 // it checks for an existing record before creating. No-ops if the function
 // hasn't been deployed yet (normal on first `shopify app dev` before build).
+// Requires the read/write_delivery_customizations scopes (fixed 2026-07-15 —
+// this failed silently for months on missing scopes AND an invalid query:
+// apiType is a lowercase string and ShopifyFunction has no `handle` field).
 async function enableWholesaleShippingFunction(admin: any) {
   try {
     const fnRes = await admin.graphql(`
       query GetDeliveryFunctions {
-        shopifyFunctions(first: 25, apiType: DELIVERY_CUSTOMIZATION) {
-          nodes { id handle }
+        shopifyFunctions(first: 25, apiType: "delivery_customization") {
+          nodes { id title }
         }
       }
     `);
     const fnData = await fnRes.json();
+    if (fnData.errors) {
+      // Never mask these again — a schema or scope error here means the
+      // free-shipping function silently stays inactive.
+      console.error("[afterAuth] shopifyFunctions query errors:", fnData.errors);
+      return;
+    }
     const fn = (fnData.data?.shopifyFunctions?.nodes ?? []).find(
-      (n: { id: string; handle: string }) => n.handle === "wholesale-free-shipping"
+      (n: { id: string; title: string }) => n.title === "Wholesale Free Shipping"
     );
 
     if (!fn) {
