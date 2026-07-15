@@ -452,6 +452,12 @@
   letter-spacing: 0.06em;
 }
 
+/* Top-right placement in the page header (orders page) */
+.wh-ls-orders-link--top {
+  margin: 0;
+  flex-shrink: 0;
+}
+
 .wh-ls-orders-link a {
   color: #000;
 }
