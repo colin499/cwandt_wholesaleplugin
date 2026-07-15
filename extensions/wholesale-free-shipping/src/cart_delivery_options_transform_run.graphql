@@ -12,7 +12,7 @@ query CartDeliveryOptionsTransformRunInput {
         __typename
         ... on ProductVariant {
           product {
-            noFreeShipping: hasAnyTag(tags: ["no-free-shipping"])
+            noFreeShipping: hasAnyTag(tags: ["no-free-shipping-wholesale"])
           }
         }
       }

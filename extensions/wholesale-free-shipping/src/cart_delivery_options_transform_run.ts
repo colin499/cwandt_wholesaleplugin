@@ -5,7 +5,7 @@
  * "approved") shipping to a US address:
  *   - Normal orders: hides every option that costs more than $0 → they see
  *     only the free wholesale rate.
- *   - Orders containing any product tagged `no-free-shipping` (big/heavy
+ *   - Orders containing any product tagged `no-free-shipping-wholesale` (big/heavy
  *     items, e.g. Superlocal, Time Since Launch): hides every $0 option
  *     instead → they pay real freight. One heavy item disqualifies the whole
  *     shipment, since rates apply per shipment, not per line.
@@ -50,7 +50,7 @@ export function cartDeliveryOptionsTransformRun(
     return { operations };
   }
 
-  // Any `no-free-shipping`-tagged product in the cart disqualifies the whole
+  // Any `no-free-shipping-wholesale`-tagged product in the cart disqualifies the whole
   // order from free shipping.
   const hasHeavyItem = input.cart.lines.some(
     (line) =>
