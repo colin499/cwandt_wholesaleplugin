@@ -443,6 +443,7 @@
 
     if (lines.length === 0) {
       summaryEl.textContent = "0 PRODUCTS · 0 VARIANTS · 0 ITEMS · " + formatMoney(0);
+      setText("wh-ls-print-summary", summaryEl.textContent);
       return;
     }
     var products = {};
@@ -454,6 +455,8 @@
       " · " + lines.length + " VARIANT" + (lines.length === 1 ? "" : "S") +
       " · " + units + " ITEM" + (units === 1 ? "" : "S") +
       " · " + formatMoney(subtotal);
+    // Print summary shows the clean totals (MOQ/minimum notes are screen-only).
+    setText("wh-ls-print-summary", text);
     if (moqShort.length > 0) {
       text += " — " + moqShort.length + " item" + (moqShort.length === 1 ? "" : "s") + " below MOQ";
     } else if (orderMinimumCents !== null && subtotal < orderMinimumCents) {
@@ -471,6 +474,12 @@
 
   function setSaveState(text) {
     if (saveStateEl) saveStateEl.textContent = text;
+  }
+
+  // Mirror a value into an element by id (screen panel ↔ print header).
+  function setText(id, text) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = text;
   }
 
   function getPoNumber() {
@@ -538,17 +547,18 @@
       })
       .then(function (data) {
         if (data.customer) {
-          var nameEl = document.getElementById("wh-ls-cust-name");
-          var companyEl = document.getElementById("wh-ls-cust-company");
-          var emailEl = document.getElementById("wh-ls-cust-email");
-          if (nameEl) nameEl.textContent = data.customer.name || "—";
-          if (companyEl) companyEl.textContent = data.customer.company || "—";
-          if (emailEl) emailEl.textContent = data.customer.email || "—";
+          setText("wh-ls-cust-name", data.customer.name || "—");
+          setText("wh-ls-cust-company", data.customer.company || "—");
+          setText("wh-ls-cust-email", data.customer.email || "—");
+          setText("wh-ls-print-name", data.customer.name || "—");
+          setText("wh-ls-print-company", data.customer.company || "—");
+          setText("wh-ls-print-email", data.customer.email || "—");
         }
         if (prefill && data.draft) {
           if (data.draft.lines) applyDraftLines(content, data.draft.lines);
           var poEl = document.getElementById("wh-ls-po");
           if (poEl && data.draft.po_number) poEl.value = data.draft.po_number;
+          setText("wh-ls-print-po", getPoNumber() || "—");
           var ownEl = document.getElementById("wh-ls-own-label");
           if (ownEl) ownEl.checked = !!data.draft.ship_own_label;
           updateSummary(content, summaryEl);
@@ -687,35 +697,42 @@
      PDF download via html2pdf.js
      ---------------------------------------------------------------------- */
 
-  function downloadPDF(contentEl, btn) {
+  function downloadPDF(btn) {
     if (typeof html2pdf === "undefined") {
       alert("PDF export is loading — please try again in a moment.");
       return;
     }
 
+    // Export the whole sheet in print layout: .wh-pdf-mode applies the same
+    // hide/show rules as @media print (header + summary visible, toolbar and
+    // qty column hidden) since html2canvas ignores print media queries.
+    var sheet = document.querySelector(".wh-linesheet");
+    if (!sheet) return;
+
     var original = btn.textContent;
     btn.disabled = true;
     btn.textContent = "Generating PDF…";
+    sheet.classList.add("wh-pdf-mode");
+
+    function done() {
+      sheet.classList.remove("wh-pdf-mode");
+      btn.disabled = false;
+      btn.textContent = original;
+    }
 
     html2pdf()
       .set({
         margin: [8, 8],
-        filename: "cwandt-wholesale-linesheet.pdf",
+        filename: "cwandt-wholesale-order-sheet.pdf",
         image: { type: "jpeg", quality: 0.88 },
         html2canvas: { scale: 2, useCORS: true, logging: false },
-        jsPDF: { unit: "mm", format: "a4", orientation: "landscape" },
+        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
         pagebreak: { mode: ["avoid-all", "css"] },
       })
-      .from(contentEl)
+      .from(sheet)
       .save()
-      .then(function () {
-        btn.disabled = false;
-        btn.textContent = original;
-      })
-      .catch(function () {
-        btn.disabled = false;
-        btn.textContent = original;
-      });
+      .then(done)
+      .catch(done);
   }
 
   /* -------------------------------------------------------------------------
@@ -814,9 +831,21 @@
         scheduleDraftSave(content);
       });
 
+      // Sheet date: today until submitted (a submitted sheet becomes an order;
+      // this page always shows the working draft). Mirrored into the print header.
+      var todayText = new Date().toLocaleDateString("en-US", {
+        year: "numeric", month: "short", day: "numeric",
+      });
+      setText("wh-ls-date", todayText);
+      setText("wh-ls-print-date", todayText);
+      setText("wh-ls-print-po", "—");
+
       // PO input + own-label checkbox autosave with the draft
       var poEl = document.getElementById("wh-ls-po");
-      if (poEl) poEl.addEventListener("input", function () { scheduleDraftSave(content); });
+      if (poEl) poEl.addEventListener("input", function () {
+        setText("wh-ls-print-po", getPoNumber() || "—");
+        scheduleDraftSave(content);
+      });
       var ownEl = document.getElementById("wh-ls-own-label");
       if (ownEl) ownEl.addEventListener("change", function () { scheduleDraftSave(content); });
 
@@ -841,7 +870,7 @@
           exportMenu.hidden = true;
           var kind = item.getAttribute("data-export");
           if (kind === "csv") downloadCSV(content);
-          if (kind === "pdf") downloadPDF(content, exportBtn);
+          if (kind === "pdf") downloadPDF(exportBtn);
           if (kind === "gsheet") openGoogleSheet(content, resultEl);
         });
       }

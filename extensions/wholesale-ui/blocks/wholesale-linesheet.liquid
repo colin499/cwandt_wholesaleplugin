@@ -45,6 +45,9 @@
           <span class="wh-ls-key">PO #</span><span class="wh-ls-val"><input type="text" id="wh-ls-po" class="wh-ls-po-input" placeholder="optional" maxlength="120"></span>
         </p>
         <p class="wh-ls-kv">
+          <span class="wh-ls-key">DATE</span><span class="wh-ls-val" id="wh-ls-date"></span>
+        </p>
+        <p class="wh-ls-kv">
           <span class="wh-ls-key">NAME</span><span class="wh-ls-val" id="wh-ls-cust-name"></span>
         </p>
         <p class="wh-ls-kv">
@@ -80,11 +83,24 @@
       </div>
     </div>
 
-    {% comment %} Print header — hidden on screen, visible when printing {% endcomment %}
+    {% comment %}
+      Print/PDF header — hidden on screen, shown when printing or exporting.
+      Right-column values are mirrored from the live sheet by linesheet.js.
+    {% endcomment %}
     <div class="wh-ls-print-header wh-print-only">
-      <p class="wh-ls-print-company">{{ block.settings.company_name | default: 'CW&T' }}</p>
-      <p class="wh-ls-print-title">Wholesale Line Sheet</p>
+      <div class="wh-ls-print-left">
+        <p class="wh-ls-print-company">CW&amp;T Wholesale Order Sheet</p>
+        <p class="wh-ls-print-contact">CONTACT : {{ block.settings.contact_email | default: 'hello@cwandt.com' }}</p>
+      </div>
+      <div class="wh-ls-print-right">
+        <p class="wh-ls-kv"><span class="wh-ls-key">PO #</span><span class="wh-ls-val" id="wh-ls-print-po"></span></p>
+        <p class="wh-ls-kv"><span class="wh-ls-key">DATE</span><span class="wh-ls-val" id="wh-ls-print-date"></span></p>
+        <p class="wh-ls-kv"><span class="wh-ls-key">NAME</span><span class="wh-ls-val" id="wh-ls-print-name"></span></p>
+        <p class="wh-ls-kv"><span class="wh-ls-key">COMPANY</span><span class="wh-ls-val" id="wh-ls-print-company"></span></p>
+        <p class="wh-ls-kv"><span class="wh-ls-key">EMAIL</span><span class="wh-ls-val" id="wh-ls-print-email"></span></p>
+      </div>
     </div>
+    <p class="wh-ls-print-summary wh-print-only" id="wh-ls-print-summary"></p>
 
     <div id="wh-ls-order-result" class="wh-ls-order-result" role="status" aria-live="polite" hidden></div>
 
@@ -125,14 +141,8 @@
     {
       "type": "text",
       "id": "contact_email",
-      "label": "Contact email (shown under the title)",
+      "label": "Contact email (shown under the title and on the PDF)",
       "default": "hello@cwandt.com"
-    },
-    {
-      "type": "text",
-      "id": "company_name",
-      "label": "Company Name (shown on PDF)",
-      "default": "CW&T"
     }
   ]
 }

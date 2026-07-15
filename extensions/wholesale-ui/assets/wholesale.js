@@ -452,6 +452,14 @@
     if (isOrdersLink) a.setAttribute("href", "/pages/orders");
   });
 
+  // The dropdown trigger itself ("WHOLESALE : NAME") linked to Shopify's
+  // hosted account page, which shows a generic order list — confusing next to
+  // the wholesale order history. Send wholesale customers to the order
+  // history instead; profile/addresses stay reachable via "Account Info".
+  document.querySelectorAll("a.wh-account").forEach(function (a) {
+    a.setAttribute("href", "/pages/orders");
+  });
+
   /* -------------------------------------------------------------------------
      10. Main init
      ---------------------------------------------------------------------- */

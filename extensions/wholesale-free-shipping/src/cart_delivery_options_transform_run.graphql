@@ -7,6 +7,16 @@ query CartDeliveryOptionsTransformRunInput {
         }
       }
     }
+    lines {
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          product {
+            noFreeShipping: hasAnyTag(tags: ["no-free-shipping"])
+          }
+        }
+      }
+    }
     deliveryGroups {
       id
       deliveryAddress {

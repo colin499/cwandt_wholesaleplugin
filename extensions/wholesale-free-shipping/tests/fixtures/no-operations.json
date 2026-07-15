@@ -9,6 +9,16 @@
             "metafield": null
           }
         },
+        "lines": [
+          {
+            "merchandise": {
+              "__typename": "ProductVariant",
+              "product": {
+                "noFreeShipping": false
+              }
+            }
+          }
+        ],
         "deliveryGroups": [
           {
             "id": "gid://shopify/CartDeliveryGroup/0",

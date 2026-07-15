@@ -24,7 +24,7 @@
             "merchandise": {
               "__typename": "ProductVariant",
               "product": {
-                "noFreeShipping": false
+                "noFreeShipping": true
               }
             }
           }
@@ -66,12 +66,7 @@
       "operations": [
         {
           "deliveryOptionHide": {
-            "deliveryOptionHandle": "standard"
-          }
-        },
-        {
-          "deliveryOptionHide": {
-            "deliveryOptionHandle": "express"
+            "deliveryOptionHandle": "wholesale-free-shipping"
           }
         }
       ]

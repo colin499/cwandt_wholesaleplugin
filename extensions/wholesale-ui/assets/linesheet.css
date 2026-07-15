@@ -462,30 +462,52 @@
 }
 
 /* --------------------------------------------------------------------------
-   Print styles
+   Print / PDF styles
+   The print header + summary render in two contexts: @media print (browser
+   print) and .wh-pdf-mode (html2pdf export — html2canvas ignores print media
+   queries, so the class applies the same rules on screen during capture).
    -------------------------------------------------------------------------- */
 .wh-no-print    { /* hidden in @media print below */ }
 .wh-print-only  { display: none; }
 
 .wh-ls-print-header {
-  margin-bottom: 20px;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  margin-bottom: 14px;
 }
 
 .wh-ls-print-company {
-  font-size: 10pt;
+  font-size: 13px;
+  text-transform: uppercase;
   margin: 0;
 }
 
-.wh-ls-print-title {
-  font-size: 9pt;
-  margin: 2pt 0 0;
+.wh-ls-print-contact {
+  font-size: 11px;
+  margin: 4px 0 0;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
 }
 
+.wh-ls-print-right {
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.wh-ls-print-summary {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  margin: 0 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #000;
+}
+
+/* Shared print/PDF layout rules — keep the two blocks below in sync. */
 @media print {
   .wh-no-print      { display: none !important; }
   .wh-print-only    { display: block !important; }
+  .wh-ls-print-header.wh-print-only { display: flex !important; }
 
   /* Replace hyperlinks with plain text on print */
   .wh-ls-product-link { display: none; }
@@ -537,3 +559,12 @@
   /* Qty column is screen-only — hide in print/PDF */
   .wh-ls-col-qty { display: none; }
 }
+
+/* PDF export capture mode — mirrors the @media print block above. */
+.wh-pdf-mode .wh-no-print      { display: none !important; }
+.wh-pdf-mode .wh-print-only    { display: block !important; }
+.wh-pdf-mode .wh-ls-print-header.wh-print-only { display: flex !important; }
+.wh-pdf-mode .wh-ls-product-link { display: none; }
+.wh-pdf-mode .wh-print-only-title { display: block; }
+.wh-pdf-mode .wh-ls-col-qty { display: none; }
+.wh-pdf-mode { padding: 0; }

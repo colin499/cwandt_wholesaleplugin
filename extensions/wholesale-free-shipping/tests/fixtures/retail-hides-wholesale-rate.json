@@ -6,20 +6,10 @@
       "cart": {
         "buyerIdentity": {
           "customer": {
-            "metafield": {
-              "value": "approved"
-            }
+            "metafield": null
           }
         },
         "lines": [
-          {
-            "merchandise": {
-              "__typename": "ProductVariant",
-              "product": {
-                "noFreeShipping": false
-              }
-            }
-          },
           {
             "merchandise": {
               "__typename": "ProductVariant",
@@ -66,12 +56,7 @@
       "operations": [
         {
           "deliveryOptionHide": {
-            "deliveryOptionHandle": "standard"
-          }
-        },
-        {
-          "deliveryOptionHide": {
-            "deliveryOptionHandle": "express"
+            "deliveryOptionHandle": "wholesale-free-shipping"
           }
         }
       ]
