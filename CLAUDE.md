@@ -293,6 +293,10 @@ status/type/minimum change made in the app.
 **Auto-activation**: `shopify.server.ts` `afterAuth` calls `deliveryCustomizationCreate` on
 OAuth completion. It checks for an existing record first to avoid duplicates, and no-ops
 silently if the function isn't deployed yet (safe to call on every re-auth).
+**Requires the `read/write_delivery_customizations` scopes** (added to shopify.app.toml
+2026-07-15) — before that, activation failed silently inside its try/catch on every auth
+and the function was never live. Verify activation after any fresh install:
+`deliveryCustomizations` query should list "Wholesale Free Shipping" enabled.
 
 **REQUIRED SETUP — must do before testing:**
 1. In Shopify Admin → Settings → Shipping and delivery → Manage rates: add a **$0 shipping

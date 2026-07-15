@@ -933,6 +933,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 // terms. The theme cart is NOT used — it checks out at retail. Draft orders
 // also don't reserve inventory, so out-of-stock lines are fine (backorders
 // ride along in the same order).
+// How long an unpaid invoice holds its stock. Due-on-receipt customers pay
+// within days; after this window an untouched invoice can hit the same
+// quantity-adjust failure, so staff should follow up or re-issue.
+const INVOICE_INVENTORY_RESERVE_DAYS = 14;
+
 async function handleLinesheetOrder(request: Request, url: URL) {
   const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");
   const wholesaleSession = await getWholesaleSession(shopifyCustomerId);
@@ -1132,6 +1137,19 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     const baseInput = {
       lineItems: items.map((l) => l.input),
       customerId: `gid://shopify/Customer/${sess.shopifyCustomerId}`,
+      // Reserve stock for the payable order: Shopify re-checks deny-policy
+      // inventory when the customer pays the invoice, and if stock dipped
+      // below the ordered qty in the meantime the checkout strips/adjusts
+      // lines and strands the customer on an empty cart. Reserving holds the
+      // units for the payment window. (Meaningless for the backorder draft —
+      // those lines are out of stock by definition.)
+      ...(!isBackorderOrder
+        ? {
+            reserveInventoryUntil: new Date(
+              Date.now() + INVOICE_INVENTORY_RESERVE_DAYS * 24 * 60 * 60 * 1000
+            ).toISOString(),
+          }
+        : {}),
       tags,
       note: [
         isBackorderOrder
