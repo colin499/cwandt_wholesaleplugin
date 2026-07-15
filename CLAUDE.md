@@ -322,11 +322,17 @@ Shopify routes `https://cw-and-t.myshopify.com/apps/wholesale/*` → app server 
 everywhere. When calling Admin GraphQL, construct the GID:
 `gid://shopify/Customer/${customer.shopifyCustomerId}`
 
-## SQLite → Postgres Migration
+## SQLite → Postgres (two-schema setup, 2026-07-15)
 
-When deploying to Fly.io, change `schema.prisma` datasource provider to `"postgresql"` and
-set `DATABASE_URL` to the Fly Postgres connection string. The String-based status fields work
-in both databases. Run `prisma migrate deploy` in the Dockerfile (already configured).
+Local dev stays on SQLite (`prisma/schema.prisma` + `prisma/migrations/`).
+Production uses **`prisma/production/schema.prisma`** (provider `postgresql`)
+with its own `prisma/production/migrations/` (baseline `0_init` generated via
+`prisma migrate diff`, includes the PricingProfile seed rows). The Dockerfile
+generates the client and runs `migrate deploy` with
+`--schema prisma/production/schema.prisma`; `DATABASE_URL` comes from Fly
+secrets. **Any model change must be made in BOTH schema files**, with a new
+production migration generated via `prisma migrate diff --from-schema-datamodel
+<old copy> --to-schema-datamodel prisma/production/schema.prisma --script`.
 
 ---
 

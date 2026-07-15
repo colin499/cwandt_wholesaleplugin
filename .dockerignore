@@ -1,0 +1,24 @@
+# Keep the Docker build context small and free of local secrets/state.
+node_modules
+.git
+build
+dist
+
+# Local dev database (contains the dev store's offline API token)
+prisma/dev.db
+prisma/dev.db-journal
+prisma/dev.sqlite
+
+# Local env — production secrets come from `fly secrets`
+.env
+.env.*
+
+# Not used by the server image (deployed via `shopify app deploy`)
+extensions
+_disabled_extensions
+
+# Local tooling / docs
+.shopify
+*.md
+dev-start.sh
+dev-proxy.mjs

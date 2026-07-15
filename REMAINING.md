@@ -68,9 +68,17 @@ Verified on the **dev store** only. Nothing has touched the live store yet.
 ### 5. Go-live — **GATED** (do not start without Colin's explicit OK)
 - Do **not** connect to the live store `cw-and-t.myshopify.com` until explicitly told.
 - Steps when cleared:
-  - Switch `schema.prisma` datasource provider `sqlite` → `postgresql`; set `DATABASE_URL` to
-    Fly Postgres; `prisma migrate deploy` (already wired in the Dockerfile).
-  - Deploy to **Fly.io** (region `ewr`, `shared-cpu-1x` 512 MB).
+  - ~~Switch schema provider~~ DONE differently (2026-07-15): production uses
+    `prisma/production/schema.prisma` (postgresql) + its own migrations; dev stays SQLite.
+    Dockerfile already wired. Set `DATABASE_URL` via `fly postgres attach`.
+  - Create the **production Shopify app** (`shopify app config link` → new app, fixed
+    fly.dev URLs) so `shopify app dev` can never clobber live config; deploy extensions +
+    config with `shopify app deploy --config production`.
+  - Deploy to **Fly.io** (region `ewr`, `shared-cpu-1x` 512 MB): `fly apps create
+    cwandt-wholesale`, `fly postgres create` + `attach`, `fly secrets set
+    SHOPIFY_API_KEY/SECRET SHOPIFY_APP_URL CMS_BASE_URL CMS_API_TOKEN`, `fly deploy`.
+  - Tag heavy products (`no-free-shipping-wholesale`: Superlocal, Time Since Launch) and
+    add the $0 US rate named exactly "Wholesale Free Shipping" on the live store.
   - Set production env: `SHOPIFY_API_KEY/SECRET`, `SHOPIFY_APP_URL`, `CMS_BASE_URL`,
     `CMS_API_TOKEN`.
   - Install/authorize on the live store; run the storefront setup (§3) on the live theme;

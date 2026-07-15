@@ -1,0 +1,265 @@
+// CW&T Wholesale App — PRODUCTION Prisma schema (PostgreSQL / Fly.io)
+// ---------------------------------------------------------------------------
+// GENERATED COPY of ../schema.prisma with provider switched to postgresql.
+// Local dev keeps SQLite via ../schema.prisma; this file + its migrations/
+// are used ONLY by the Docker build (see Dockerfile):
+//   prisma generate --schema prisma/production/schema.prisma
+//   prisma migrate deploy --schema prisma/production/schema.prisma
+// KEEP IN SYNC: any model change in ../schema.prisma must be copied here and
+// a new migration generated:
+//   npx prisma migrate diff --from-schema-datamodel <old> \
+//     --to-schema-datamodel prisma/production/schema.prisma --script
+// ---------------------------------------------------------------------------
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Shopify OAuth session storage (required by @shopify/shopify-app-remix)
+// ---------------------------------------------------------------------------
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+}
+
+// ---------------------------------------------------------------------------
+// Pricing profiles — named rate templates customers point at.
+// Adding a new segment (e.g. B2B) is a new row here, not a code change.
+// Fixed ids ("pp_wholesale", "pp_distributor", "pp_b2b") are seeded in the
+// add_pricing_profiles migration so code and other environments can reference
+// them stably.
+// paymentTerms: "CREDIT_CARD" | "NET_30" | "NET_60" — default applied at enrollment
+// minimumOrderValue: profile-level minimum in USD; null = use global OrderMinimumConfig
+// ---------------------------------------------------------------------------
+model PricingProfile {
+  id                String   @id @default(cuid())
+  name              String   @unique
+  discountPercent   Float
+  paymentTerms      String   @default("CREDIT_CARD")
+  minimumOrderValue Float?
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  customers WholesaleCustomer[]
+}
+
+// ---------------------------------------------------------------------------
+// Wholesale customer accounts
+// status: "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED"
+// customerType: segmentation only ("WHOLESALE" | "DISTRIBUTOR" | "B2B") —
+//   pricing comes from pricingProfile, not from the type
+// paymentTerms: "CREDIT_CARD" | "NET_30" | "NET_60"
+// discountPercent: per-customer override; null = use pricingProfile rate
+// minimumOrderValue: per-customer override in USD; null = profile, then global
+// ---------------------------------------------------------------------------
+model WholesaleCustomer {
+  id                String   @id @default(cuid())
+  shopifyCustomerId String   @unique
+  email             String
+  firstName         String?
+  lastName          String?
+  company           String?
+  phone             String?
+  status            String   @default("PENDING")
+  customerType      String   @default("WHOLESALE")
+  pricingProfileId  String?
+  pricingProfile    PricingProfile? @relation(fields: [pricingProfileId], references: [id])
+  discountPercent   Float?
+  paymentTerms      String   @default("CREDIT_CARD")
+  minimumOrderValue Float?
+  exemptFromMoq     Boolean  @default(false) // per-customer: ignore variant MOQs everywhere
+  taxExempt         Boolean  @default(false) // projected to Shopify Customer.taxExempt on sync
+  approvedAt        DateTime?
+  approvedBy        String?
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  application WholesaleApplication?
+  orders      WholesaleOrder[]
+}
+
+// ---------------------------------------------------------------------------
+// Wholesale account applications
+// status: "PENDING" | "APPROVED" | "REJECTED"
+// ---------------------------------------------------------------------------
+model WholesaleApplication {
+  id                     String    @id @default(cuid())
+  email                  String
+  firstName              String
+  lastName               String
+  company                String
+  website                String?
+  phone                  String?
+  taxId                  String?
+  resaleNumber           String?
+  estimatedMonthlyVolume String?
+  message                String?
+  status                 String    @default("PENDING")
+  reviewedAt             DateTime?
+  reviewedBy             String?
+  rejectionReason        String?
+
+  shopifyCustomerId String?           @unique
+  customer          WholesaleCustomer? @relation(fields: [shopifyCustomerId], references: [shopifyCustomerId])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Pricing rules
+// type: "GLOBAL_DISCOUNT" | "VOLUME_TIER" | "PRODUCT_OVERRIDE"
+// ---------------------------------------------------------------------------
+model PricingRule {
+  id               String   @id @default(cuid())
+  name             String
+  type             String   @default("GLOBAL_DISCOUNT")
+  discountPercent  Float
+  minimumQuantity  Int?
+  minimumCartValue Float?
+  shopifyProductId String?
+  active           Boolean  @default(true)
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Order minimums configuration
+// ---------------------------------------------------------------------------
+model OrderMinimumConfig {
+  id                   String   @id @default(cuid())
+  minimumOrderValue    Float    @default(500)
+  minimumOrderQuantity Int?
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Wholesale orders
+// paymentTerms: "CREDIT_CARD" | "NET_30" | "NET_60"
+// status: "PENDING" | "CONFIRMED" | "FULFILLED" | "CANCELLED"
+// orderTags: JSON array stored as text, e.g. '["wholesale","net-30"]'
+// ---------------------------------------------------------------------------
+model WholesaleOrder {
+  id                  String    @id @default(cuid())
+  shopifyOrderId      String?   @unique
+  shopifyDraftOrderId String?   @unique
+  orderName           String?
+  shopifyCustomerId   String
+  customer            WholesaleCustomer @relation(fields: [shopifyCustomerId], references: [shopifyCustomerId])
+  paymentTerms        String    @default("CREDIT_CARD")
+  totalAmount         Float
+  currency            String?   // ISO 4217, e.g. "USD" — from webhook payload.currency
+  discountPercent     Float
+  isBackorder         Boolean   @default(false)
+  backorderNote       String?
+  orderTags           String    @default("[]")
+  status              String    @default("PENDING")
+  shopifyCreatedAt    DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// App-wide wholesale settings
+// maxDiscountPercent: combined global + volume tier discount can never exceed this
+// ---------------------------------------------------------------------------
+model WholesaleSettings {
+  id                 String   @id @default(cuid())
+  maxDiscountPercent Float    @default(70)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Linesheet order drafts
+// One active DRAFT per customer (enforced in code, not schema); submitted
+// sheets stay as SUBMITTED history the customer can duplicate into a new
+// draft. lines: JSON array stored as text — [{"variant_id": n, "quantity": n}]
+// subtotalCents: client-estimated while DRAFT; server-final once SUBMITTED.
+// status: "DRAFT" | "SUBMITTED"
+// ---------------------------------------------------------------------------
+model LinesheetDraft {
+  id                  String   @id @default(cuid())
+  shopifyCustomerId   String
+  status              String   @default("DRAFT")
+  lines               String   @default("[]")
+  subtotalCents       Int      @default(0)
+  poNumber            String?  // customer's purchase-order reference
+  shipOwnLabel        Boolean  @default(false) // customer provides shipping label
+  shopifyDraftOrderId String?
+  orderName           String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([shopifyCustomerId, status])
+}
+
+// ---------------------------------------------------------------------------
+// CMS variant price/MOQ cache
+// Populated by syncCmsDataToDb() from GET /api/wholesale/variants/.
+// shopifyVariantId is the numeric Shopify variant ID stored as a string.
+// Prices stored in cents (CMS returns dollars; multiply × 100 on sync).
+// ---------------------------------------------------------------------------
+model CmsVariantCache {
+  shopifyVariantId      String   @id   // numeric Shopify variant ID as string
+  sku                   String   @default("")
+  wholesalePriceCents   Int      // CMS wholesale_price × 100
+  distributorPriceCents Int      // CMS distributor_price × 100
+  moq                   Int      @default(1)
+  caseSize              Int?     // preferred case pack (soft); null = no case concept
+  cmsStatus             String   @default("")
+  updatedAt             DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// CMS sync state — singleton row (id = "singleton") tracking last sync run
+// ---------------------------------------------------------------------------
+model CmsSyncState {
+  id           String    @id @default("singleton")
+  lastSyncedAt DateTime?
+  variantCount Int       @default(0)
+  lastError    String?
+  updatedAt    DateTime  @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// CMS sync log
+// syncType: "PRODUCT" | "VARIANT" | "INVENTORY" | "ORDER" | "WHOLESALE_PRICE" | "CUSTOMER"
+// direction: "CMS_TO_APP" | "APP_TO_CMS"
+// status: "SUCCESS" | "FAILED" | "PENDING"
+// payload: JSON stored as text (SQLite has no native JSON column)
+// ---------------------------------------------------------------------------
+model CmsSyncLog {
+  id           String   @id @default(cuid())
+  syncType     String
+  direction    String
+  shopifyId    String?
+  cmsRecordId  String?
+  status       String
+  errorMessage String?
+  payload      String?
+  createdAt    DateTime @default(now())
+}
