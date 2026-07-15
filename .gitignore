@@ -36,3 +36,4 @@ dist
 # a " 2" suffix. Never track them — they corrupt builds and bloat commits.
 * [0-9]
 * [0-9].*
+prisma/dev.sqlite
