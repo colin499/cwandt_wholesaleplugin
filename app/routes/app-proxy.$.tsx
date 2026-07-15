@@ -193,7 +193,7 @@ async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
     {
       key: string;
       invoiceUrl: string | null;
-      tracking: Array<{ number: string | null; url: string | null }>;
+      tracking: Array<{ number: string | null; url: string | null; company: string | null }>;
     }
   >();
   if (draftOrderIds.length === 0) return map;
@@ -209,7 +209,7 @@ async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
               cancelledAt
               displayFulfillmentStatus
               fulfillments(first: 10) {
-                trackingInfo(first: 5) { number url }
+                trackingInfo(first: 5) { number url company }
               }
             }
           }
@@ -223,11 +223,13 @@ async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
       const numericId = String(node.id.split("/").pop());
       const order = node.order;
       let key = "SUBMITTED";
-      const tracking: Array<{ number: string | null; url: string | null }> = [];
+      const tracking: Array<{ number: string | null; url: string | null; company: string | null }> = [];
       if (order) {
         for (const f of order.fulfillments ?? []) {
           for (const t of f.trackingInfo ?? []) {
-            if (t.number || t.url) tracking.push({ number: t.number, url: t.url });
+            if (t.number || t.url) {
+              tracking.push({ number: t.number, url: t.url, company: t.company ?? null });
+            }
           }
         }
         if (order.cancelledAt) key = "CANCELLED";
@@ -1089,6 +1091,24 @@ async function handleLinesheetOrder(request: Request, url: URL) {
         ? "net-60"
         : null;
 
+  // NET-terms customers get REAL Shopify payment terms on the order (native
+  // due-date tracking, overdue badges, and payment reminders) — resolve the
+  // matching template. Best-effort: order creation proceeds without terms if
+  // the lookup fails.
+  let paymentTermsTemplateId: string | null = null;
+  if (termsTag) {
+    try {
+      const res = await admin.graphql(`query { paymentTermsTemplates { id name } }`);
+      const body = await res.json();
+      const wantName = wholesaleSession.paymentTerms === "NET_30" ? "Net 30" : "Net 60";
+      paymentTermsTemplateId =
+        (body.data?.paymentTermsTemplates ?? []).find((t: any) => t.name === wantName)?.id ??
+        null;
+    } catch (err) {
+      console.error("[app-proxy/linesheet-order] payment terms lookup failed:", err);
+    }
+  }
+
   const stockItems = lineItems.filter((l) => !l.isBackorder);
   const backorderItems = lineItems.filter((l) => l.isBackorder);
 
@@ -1109,40 +1129,59 @@ async function handleLinesheetOrder(request: Request, url: URL) {
       ...(termsTag ? [termsTag] : []),
       ...(shipOwnLabel ? ["customer-shipping-label"] : []),
     ];
-    const res = await admin.graphql(
-      `#graphql
-      mutation linesheetDraftOrderCreate($input: DraftOrderInput!) {
-        draftOrderCreate(input: $input) {
-          draftOrder { id name invoiceUrl totalPrice }
-          userErrors { field message }
-        }
-      }`,
-      {
-        variables: {
-          input: {
-            lineItems: items.map((l) => l.input),
-            customerId: `gid://shopify/Customer/${sess.shopifyCustomerId}`,
-            tags,
-            note: [
-              isBackorderOrder
-                ? "Wholesale BACKORDER — do not invoice until stock arrives, then send the invoice from this draft."
-                : `Wholesale line sheet order${termsTag ? ` — payment terms ${termsTag.toUpperCase()}` : ""}.`,
-              ...noteLines,
-            ]
-              .filter(Boolean)
-              .join("\n"),
-            ...(poNumber ? { poNumber } : {}),
-          },
-        },
-      }
+    const baseInput = {
+      lineItems: items.map((l) => l.input),
+      customerId: `gid://shopify/Customer/${sess.shopifyCustomerId}`,
+      tags,
+      note: [
+        isBackorderOrder
+          ? "Wholesale BACKORDER — do not invoice until stock arrives, then send the invoice from this draft."
+          : `Wholesale line sheet order${termsTag ? ` — payment terms ${termsTag.toUpperCase()}` : ""}.`,
+        ...noteLines,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      ...(poNumber ? { poNumber } : {}),
+    };
+    // Payment terms only on the payable order — the backorder draft is
+    // invoiced manually when stock arrives.
+    const withTerms = !isBackorderOrder && paymentTermsTemplateId;
+
+    async function attempt(input: Record<string, unknown>) {
+      const res = await admin.graphql(
+        `#graphql
+        mutation linesheetDraftOrderCreate($input: DraftOrderInput!) {
+          draftOrderCreate(input: $input) {
+            draftOrder { id name invoiceUrl totalPrice }
+            userErrors { field message }
+          }
+        }`,
+        { variables: { input } }
+      );
+      const body = await res.json();
+      return {
+        errors: body.data?.draftOrderCreate?.userErrors ?? [],
+        draftOrder: body.data?.draftOrderCreate?.draftOrder ?? null,
+      };
+    }
+
+    let { errors, draftOrder } = await attempt(
+      withTerms ? { ...baseInput, paymentTerms: { paymentTermsTemplateId } } : baseInput
     );
-    const body = await res.json();
-    const errors = body.data?.draftOrderCreate?.userErrors ?? [];
+    // Payment terms are a nicety — never let them block the order (e.g. the
+    // write_payment_terms scope not granted yet on this store).
+    if (
+      errors.length > 0 &&
+      withTerms &&
+      errors.some((e: any) => /payment terms/i.test(e.message ?? ""))
+    ) {
+      console.error("[app-proxy/linesheet-order] payment terms rejected, retrying without:", errors);
+      ({ errors, draftOrder } = await attempt(baseInput));
+    }
     if (errors.length > 0) {
       console.error("[app-proxy/linesheet-order] userErrors:", errors);
       return null;
     }
-    const draftOrder = body.data?.draftOrderCreate?.draftOrder;
     if (!draftOrder) return null;
 
     const amount = items.reduce((sum, l) => sum + l.amountCents, 0);
@@ -1182,6 +1221,36 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     return json({ error: "Failed to create order" }, { status: 500 });
   }
 
+  // NET-terms customers never pay upfront, so their draft would sit invisible
+  // in Drafts — complete it immediately (payment pending) so it lands in the
+  // orders/shipping queue with its due date tracked by the payment terms.
+  // Best-effort: on failure it stays a draft and the staff draft-order alert
+  // (Shopify Flow) catches it.
+  let queuedOrder: { id: string; name: string } | null = null;
+  if (stockOrder && termsTag) {
+    try {
+      const res = await admin.graphql(
+        `#graphql
+        mutation linesheetTermsComplete($id: ID!) {
+          draftOrderComplete(id: $id, paymentPending: true) {
+            draftOrder { order { id name } }
+            userErrors { field message }
+          }
+        }`,
+        { variables: { id: stockOrder.id } }
+      );
+      const body = await res.json();
+      const errors = body.data?.draftOrderComplete?.userErrors ?? [];
+      if (errors.length > 0) {
+        console.error("[app-proxy/linesheet-order] terms auto-complete userErrors:", errors);
+      } else {
+        queuedOrder = body.data?.draftOrderComplete?.draftOrder?.order ?? null;
+      }
+    } catch (err) {
+      console.error("[app-proxy/linesheet-order] terms auto-complete failed:", err);
+    }
+  }
+
   // Primary order for history/response: the payable one, else the backorder.
   const draftOrder = stockOrder ?? backorderOrder;
 
@@ -1196,8 +1265,8 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     shopifyDraftOrderId: draftOrder.id.split("/").pop() ?? "",
     orderName:
       stockOrder && backorderOrder
-        ? `${stockOrder.name} + ${backorderOrder.name} (backorder)`
-        : draftOrder.name,
+        ? `${(queuedOrder ?? stockOrder).name} + ${backorderOrder.name} (backorder)`
+        : (queuedOrder ?? draftOrder).name,
   };
   const activeDraft = await getActiveDraft(wholesaleSession.shopifyCustomerId);
   if (activeDraft) {
@@ -1210,10 +1279,12 @@ async function handleLinesheetOrder(request: Request, url: URL) {
 
   return proxyJson({
     ok: true,
-    order_name: draftOrder.name,
-    // Pay-now link only exists for the in-stock order; an all-backorder
-    // submission is invoiced by the merchant when stock arrives.
-    invoice_url: stockOrder ? stockOrder.invoiceUrl : null,
+    order_name: queuedOrder ? queuedOrder.name : draftOrder.name,
+    // Pay-now link only exists for the in-stock order; NET-terms orders are
+    // auto-completed (invoiced per terms) and an all-backorder submission is
+    // invoiced by the merchant when stock arrives.
+    invoice_url: stockOrder && !queuedOrder ? stockOrder.invoiceUrl : null,
+    order_queued: !!queuedOrder,
     subtotal_cents: subtotalCents,
     item_count: lineItems.length,
     payment_terms: wholesaleSession.paymentTerms,

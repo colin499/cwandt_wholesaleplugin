@@ -82,6 +82,17 @@ Verified on the **dev store** only. Nothing has touched the live store yet.
   - **Tell staff the workflow changed** (2026-07-10 restructure): tagging a customer in
     Shopify Admin no longer onboards them (tags self-heal to match the app). Onboard,
     suspend, and change customer types in the app's Customers page only.
+  - **Set up the staff alert for wholesale draft orders** (Shopify Flow): trigger
+    "Draft order created" → condition: tags contain `wholesale` → action: send internal
+    email. Catches pay-later drafts and backorder drafts that never become orders on
+    their own. (NET-30/60 orders auto-complete into the shipping queue as of 2026-07-15;
+    everything else still starts as a draft.)
+  - **Re-run the CMS coverage audit against the live program**
+    (`node scripts/cms-coverage.mjs`, `DB_PATH=<prod db or local copy>`): compares
+    cwandt.com's public catalog to synced CMS rows by SKU, lists every variant that
+    won't be wholesale-orderable. Taylor wants to exercise the CMS curation workflow
+    live (2026-07-15 audit: 112/325 variants covered; ~85 sellable candidates missing,
+    rest is $0/no-SKU portfolio noise).
 
 ---
 

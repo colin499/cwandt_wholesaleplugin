@@ -86,9 +86,15 @@
     var html = '<div class="wh-orders-detail-head">';
     html += "<span>" + esc(statusText(order.status));
     (order.tracking || []).forEach(function (t) {
-      var label = t.number ? "Tracking " + t.number : "Tracking";
-      html += t.url
-        ? ' · <a href="' + esc(t.url) + '" target="_blank" rel="noopener">' + esc(label) + "</a>"
+      var carrier = t.company && t.company !== "Other" ? t.company : "Tracking";
+      var label = carrier + (t.number ? " " + t.number : "");
+      // Shopify only provides a tracking URL for carriers it recognizes —
+      // fall back to a search on the number so it's always clickable.
+      var url =
+        t.url ||
+        (t.number ? "https://www.google.com/search?q=" + encodeURIComponent(t.number) : null);
+      html += url
+        ? ' · <a href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(label) + "</a>"
         : " · " + esc(label);
     });
     if (order.invoice_url && (order.status === "SUBMITTED" || order.status === "INVOICE_SENT")) {

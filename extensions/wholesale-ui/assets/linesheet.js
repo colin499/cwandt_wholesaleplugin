@@ -653,6 +653,9 @@
             formatMoney(data.subtotal_cents) + ")." +
             (data.payment_terms === "NET_30" ? " Payment terms: Net 30." :
              data.payment_terms === "NET_60" ? " Payment terms: Net 60." : "");
+          if (data.order_queued) {
+            msg += " It's headed to our fulfillment queue — we'll invoice per your terms.";
+          }
           if (data.backorder_name) {
             msg += " " + data.backorder_count + " out-of-stock item" +
               (data.backorder_count === 1 ? " is" : "s are") +
