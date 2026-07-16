@@ -66,7 +66,8 @@ Verified on the **dev store** only. Nothing has touched the live store yet.
     non-US / non-wholesale buyer still sees normal rates.
 
 ### 5. Go-live — **GATED** (do not start without Colin's explicit OK)
-- Do **not** connect to the live store `cw-and-t.myshopify.com` until explicitly told.
+- Live store is `thehundredthmonkey.myshopify.com` (public domain cwandt.com; the
+  `cw-and-t.myshopify.com` domain in older docs never existed). Go-live began 2026-07-16.
 - Steps when cleared:
   - ~~Switch schema provider~~ DONE differently (2026-07-15): production uses
     `prisma/production/schema.prisma` (postgresql) + its own migrations; dev stays SQLite.

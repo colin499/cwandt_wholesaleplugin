@@ -184,7 +184,10 @@ tracks the payable order.
 ## Critical Constraints
 
 - CMS repo (`github.com/cheewee2000/cwandt-cms`) — commits are allowed but scope is narrow: only add what is explicitly planned and reviewed before writing
-- Do NOT connect to the live Shopify store (`cw-and-t.myshopify.com`) until explicitly told
+- The live store's myshopify domain is **`thehundredthmonkey.myshopify.com`** (legacy store
+  name; public domain is cwandt.com, admin at admin.shopify.com/store/thehundredthmonkey).
+  `cw-and-t.myshopify.com` does NOT exist — old docs referencing it are wrong. Go-live began
+  2026-07-16; live-store work is now authorized.
 - All storefront UI via Theme App Extensions only — no direct theme file edits
 - The only planned CMS change: add one read-only endpoint (`GET /api/wholesale/variants/`)
 
@@ -312,7 +315,8 @@ free international wholesale shipping in the future, change the `isUS` check in 
 
 ## App Proxy
 
-Shopify routes `https://cw-and-t.myshopify.com/apps/wholesale/*` → app server `/app-proxy/*`.
+Shopify routes `https://cwandt.com/apps/wholesale/*` (store `thehundredthmonkey.myshopify.com`)
+→ app server `/app-proxy/*`.
 `logged_in_customer_id` in the query string is HMAC-signed by Shopify — safe to trust after
 `authenticate.public.appProxy()` verifies the signature.
 

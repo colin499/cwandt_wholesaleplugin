@@ -116,11 +116,52 @@ const VARIANT_QUERY = `
       product {
         id
         status
+        tags
         hiddenVariants: metafield(namespace: "custom", key: "wholesale_hidden_variants") { value }
       }
     }
   }
 `;
+
+// ── Draft-order shipping ──────────────────────────────────────────────────────
+// The "Wholesale Free Shipping" Shopify Function can never activate on this
+// store — functions from custom-distribution apps require Shopify Plus. So
+// free shipping is applied here instead: a $0 shippingLine set on the draft
+// orders the app creates, which the invoice checkout presents as the only
+// shipping method. Products tagged `no-free-shipping-wholesale` (heavy items)
+// suppress the line — staff price real freight on the draft before invoicing.
+const NO_FREE_SHIPPING_TAG = "no-free-shipping-wholesale";
+const FREE_SHIPPING_LINE = { title: "Wholesale Free Shipping", price: "0.00" };
+const OWN_LABEL_SHIPPING_LINE = {
+  title: "Customer's own shipping label",
+  price: "0.00",
+};
+
+function productHasNoFreeShippingTag(product: any): boolean {
+  return (product?.tags ?? []).includes(NO_FREE_SHIPPING_TAG);
+}
+
+// Best-effort: free shipping only applies to US wholesale, judged by the
+// customer's default address. Unknown/missing address → no line (checkout
+// falls back to the store's normal paid rates).
+async function customerDefaultAddressIsUS(
+  admin: { graphql: Function },
+  customerGid: string
+): Promise<boolean> {
+  try {
+    const res = await admin.graphql(
+      `query CustomerCountryForShipping($id: ID!) {
+        customer(id: $id) { defaultAddress { countryCodeV2 } }
+      }`,
+      { variables: { id: customerGid } }
+    );
+    const body = await res.json();
+    return body.data?.customer?.defaultAddress?.countryCodeV2 === "US";
+  } catch (err) {
+    console.error("[app-proxy] customer country lookup failed:", err);
+    return false;
+  }
+}
 
 function notWholesale() {
   return json(
@@ -853,6 +894,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       ? Math.round((1 - state.priceCents / retailCents) * 10000) / 100
       : 0;
 
+  const backorderShippingLine =
+    !productHasNoFreeShippingTag(variantData.product) &&
+    (await customerDefaultAddressIsUS(admin, customerGid))
+      ? FREE_SHIPPING_LINE
+      : null;
+
   let draftOrder: any;
   try {
     const draftRes = await admin.graphql(
@@ -878,6 +925,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
               },
             ],
             customerId: customerGid,
+            ...(backorderShippingLine ? { shippingLine: backorderShippingLine } : {}),
             tags: ["wholesale", "backorder"],
             note: "Wholesale backorder — will ship when stock is available.",
           },
@@ -993,6 +1041,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
               id
               title
               status
+              tags
               hiddenVariants: metafield(namespace: "custom", key: "wholesale_hidden_variants") { value }
             }
           }
@@ -1056,6 +1105,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     const isBackorder = !node.availableForSale || (node.inventoryQuantity ?? 0) <= 0;
     lineItems.push({
       isBackorder,
+      noFreeShipping: productHasNoFreeShippingTag(node.product),
       amountCents: state.priceCents * line.quantity,
       input: {
         variantId: node.id,
@@ -1126,6 +1176,19 @@ async function handleLinesheetOrder(request: Request, url: URL) {
 
   const sess = wholesaleSession; // non-null capture for the closure below
 
+  // Shipping is resolved per draft (stock and backorder split orders each get
+  // their own): own-label always wins, a heavy item in the draft means staff
+  // price real freight, otherwise US customers get the free line.
+  const customerIsUS = await customerDefaultAddressIsUS(
+    admin,
+    `gid://shopify/Customer/${sess.shopifyCustomerId}`
+  );
+  function shippingLineFor(items: typeof lineItems) {
+    if (shipOwnLabel) return OWN_LABEL_SHIPPING_LINE;
+    if (items.some((l) => l.noFreeShipping)) return null;
+    return customerIsUS ? FREE_SHIPPING_LINE : null;
+  }
+
   async function createDraft(items: typeof lineItems, isBackorderOrder: boolean) {
     const tags = [
       "wholesale",
@@ -1134,9 +1197,11 @@ async function handleLinesheetOrder(request: Request, url: URL) {
       ...(termsTag ? [termsTag] : []),
       ...(shipOwnLabel ? ["customer-shipping-label"] : []),
     ];
+    const shippingLine = shippingLineFor(items);
     const baseInput = {
       lineItems: items.map((l) => l.input),
       customerId: `gid://shopify/Customer/${sess.shopifyCustomerId}`,
+      ...(shippingLine ? { shippingLine } : {}),
       // Reserve stock for the payable order: Shopify re-checks deny-policy
       // inventory when the customer pays the invoice, and if stock dipped
       // below the ordered qty in the meantime the checkout strips/adjusts
