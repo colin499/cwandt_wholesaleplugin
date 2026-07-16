@@ -105,6 +105,30 @@ Verified on the **dev store** only. Nothing has touched the live store yet.
 
 ---
 
+## 🧹 BSS decommission — live-theme cleanup (BSS uninstalled 2026-07-16)
+
+BSS B2B was uninstalled from the live store on 2026-07-16 (uninstall = subscription
+cancelled, if Shopify-billed — Taylor verifying in Settings → Billing). Apps can't
+remove their theme edits, so this residue remains on the live theme (`main` branch of
+`cwandt-shopify-theme`) and needs cleanup commits:
+
+- [ ] `sections/main-product.liquid` (~line 392): the `customer.tags contains
+      'Wholesale' / 'Distributor'` (capital-W, BSS-era) conditional under the variant
+      picker. Remove the "You are logged in as a wholesaler/distributor…" messages
+      (the app's PDP block replaces them), but KEEP the `#infiniteoptions-container`
+      hiding — rewritten to lowercase `wholesale`/`distributor`/`b2b` tag checks so it
+      applies to app-managed customers (Taylor's explicit request 2026-07-16: hide
+      Infinite Options for logged-in wholesale customers).
+- [ ] Delete dead BSS files: `snippets/bss-*.liquid` (11 files),
+      `assets/bss-lock-settings.css`, `templates/search.bss.b2b.liquid`.
+- [ ] Check `bss-lock-condition.liquid` render sites elsewhere in the theme before
+      deleting (grep for `render 'bss-` / `include 'bss-`).
+- [ ] Legacy capital-W `Wholesale`/`Distributor` customer tags stay on customer
+      records (the app's sync only manages lowercase tags and won't strip them);
+      after the theme cleanup they're inert. Optional later: bulk-remove.
+- Confirm first: is the theme repo `main` branch connected to the live theme
+  (GitHub auto-deploy), or does cleanup need a manual theme upload?
+
 ## 🧊 Deferred / Phase 2 (not now)
 - Multi-currency / Shopify Markets for order minimums (needs a business decision).
 - Minimum-order-value policy (dollar vs unit minimum) — Colin discussing with boss.

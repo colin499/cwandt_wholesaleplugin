@@ -355,9 +355,12 @@ export async function backfillFromShopify(
           result.skippedNoEmail++;
           continue;
         }
-        const customerType = tags.includes("distributor")
+        // BSS-era tags are capitalized ('Wholesale'/'Distributor') — the tag
+        // search matches them case-insensitively, so type detection must too.
+        const lowerTags = tags.map((t) => t.toLowerCase());
+        const customerType = lowerTags.includes("distributor")
           ? "DISTRIBUTOR"
-          : tags.includes("b2b")
+          : lowerTags.includes("b2b")
             ? "B2B"
             : "WHOLESALE";
         result.enrolled.push({ email: node.email, customerType });
