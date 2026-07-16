@@ -101,6 +101,14 @@
       html += ' · <a href="' + esc(order.invoice_url) + '" target="_blank" rel="noopener">Review &amp; pay &rarr;</a>';
     }
     html += "</span>";
+    if (order.draft_order_id && (order.status === "SUBMITTED" || order.status === "INVOICE_SENT")) {
+      html +=
+        '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-orders-edit"' +
+        ' data-order-id="' + esc(order.id) + '"' +
+        ' data-draft-order-id="' + esc(order.draft_order_id) + '"' +
+        ' data-order-name="' + esc(order.order_name) + '"' +
+        ' title="Reopen this order on the sheet — submitting the sheet replaces it">Edit order</button> ';
+    }
     html +=
       '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-orders-reorder"' +
       ' data-order-id="' + esc(order.id) + '"' +
@@ -171,12 +179,8 @@
      Reorder — copy this order into the active draft, go to the order sheet
      ---------------------------------------------------------------------- */
 
-  function reorder(btn, linesheetUrl) {
-    if (
-      !window.confirm(
-        "Load this order into a new order sheet? This replaces anything currently on your draft sheet."
-      )
-    ) {
+  function loadIntoSheet(btn, linesheetUrl, editContext, confirmText) {
+    if (!window.confirm(confirmText)) {
       return;
     }
     var original = btn.textContent;
@@ -193,14 +197,43 @@
         return r.json();
       })
       .then(function () {
+        // Edit mode rides in sessionStorage: the sheet shows an "editing" banner
+        // and submit sends replaces_draft_order_id. Plain reorder clears any
+        // stale edit context so a fresh order can never replace an old one.
+        try {
+          if (editContext) {
+            sessionStorage.setItem("wh-edit-order", JSON.stringify(editContext));
+          } else {
+            sessionStorage.removeItem("wh-edit-order");
+          }
+        } catch (e) { /* sessionStorage unavailable — edit degrades to reorder */ }
         window.location.href = linesheetUrl;
       })
       .catch(function (err) {
         btn.disabled = false;
         btn.textContent = original;
-        console.error("[orders] reorder error:", err);
-        alert("Could not load this order into a new sheet. Please try again.");
+        console.error("[orders] load-into-sheet error:", err);
+        alert("Could not load this order into the sheet. Please try again.");
       });
+  }
+
+  function reorder(btn, linesheetUrl) {
+    loadIntoSheet(
+      btn, linesheetUrl, null,
+      "Load this order into a new order sheet? This replaces anything currently on your draft sheet."
+    );
+  }
+
+  function editOrder(btn, linesheetUrl) {
+    loadIntoSheet(
+      btn, linesheetUrl,
+      {
+        id: btn.getAttribute("data-draft-order-id"),
+        name: btn.getAttribute("data-order-name"),
+      },
+      "Edit order " + (btn.getAttribute("data-order-name") || "") + " on the sheet? " +
+      "Submitting the sheet will replace this order. Anything currently on your draft sheet is overwritten."
+    );
   }
 
   /* -------------------------------------------------------------------------
@@ -251,6 +284,11 @@
       });
 
     content.addEventListener("click", function (e) {
+      var editBtn = e.target && e.target.closest ? e.target.closest(".wh-orders-edit") : null;
+      if (editBtn) {
+        editOrder(editBtn, linesheetUrl);
+        return;
+      }
       var reorderBtn = e.target && e.target.closest ? e.target.closest(".wh-orders-reorder") : null;
       if (reorderBtn) {
         reorder(reorderBtn, linesheetUrl);

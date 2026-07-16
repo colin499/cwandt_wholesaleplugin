@@ -689,6 +689,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           status: st.key,
           invoice_url: st.invoiceUrl,
           tracking: st.tracking,
+          draft_order_id: sheet.shopifyDraftOrderId,
           lines: lines.map((l) => {
             const node = nodeById.get(String(l.variant_id));
             let unitPriceCents: number | null = null;
@@ -746,6 +747,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           status: st.key,
           invoice_url: st.invoiceUrl,
           tracking: st.tracking,
+          draft_order_id: s.shopifyDraftOrderId,
         };
       }),
     });
@@ -1014,6 +1016,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
 
   const poNumber = String(payload?.po_number ?? "").slice(0, 120).trim();
   const shipOwnLabel = payload?.ship_own_label === true;
+  const replacesDraftOrderId = String(payload?.replaces_draft_order_id ?? "").replace(/\D/g, "");
 
   if (lines.length === 0) {
     return json({ error: "No items selected." }, { status: 422 });
@@ -1023,6 +1026,47 @@ async function handleLinesheetOrder(request: Request, url: URL) {
   }
 
   const { admin } = await unauthenticated.admin(shop);
+
+  // Editing an unpaid order: validate the target BEFORE creating anything.
+  // The old draft order is deleted only after the replacement exists, so a
+  // failure at any point leaves the original order intact.
+  let replaceTarget: { rowId: string; gid: string; name: string } | null = null;
+  if (replacesDraftOrderId) {
+    const row = await db.wholesaleOrder.findFirst({
+      where: {
+        shopifyDraftOrderId: replacesDraftOrderId,
+        shopifyCustomerId: wholesaleSession.shopifyCustomerId,
+      },
+    });
+    if (!row) {
+      return json(
+        { error: "The order you were editing can't be found. Submitting again will create a new order.", edit_expired: true },
+        { status: 422 }
+      );
+    }
+    const gid = `gid://shopify/DraftOrder/${replacesDraftOrderId}`;
+    try {
+      const res = await admin.graphql(
+        `query ReplaceTargetStatus($id: ID!) { draftOrder(id: $id) { id name status } }`,
+        { variables: { id: gid } }
+      );
+      const body = await res.json();
+      const target = body.data?.draftOrder;
+      if (!target || target.status === "COMPLETED") {
+        return json(
+          {
+            error: `Order ${target?.name ?? row.orderName} has already been processed and can no longer be edited. Submitting again will create a new order.`,
+            edit_expired: true,
+          },
+          { status: 422 }
+        );
+      }
+      replaceTarget = { rowId: row.id, gid, name: target.name };
+    } catch (err) {
+      console.error("[app-proxy/linesheet-order] replace-target lookup failed:", err);
+      return json({ error: "Could not verify the order being edited — please try again." }, { status: 502 });
+    }
+  }
 
   // Batch-validate every variant: availability, CMS price, MOQ.
   let nodes: any[] = [];
@@ -1190,12 +1234,16 @@ async function handleLinesheetOrder(request: Request, url: URL) {
   }
 
   async function createDraft(items: typeof lineItems, isBackorderOrder: boolean) {
+    // Freight items suppress the free-shipping line (see shippingLineFor);
+    // flag the draft so staff price real freight before sending the invoice.
+    const needsFreightQuote = !shipOwnLabel && items.some((l) => l.noFreeShipping);
     const tags = [
       "wholesale",
       "linesheet",
       ...(isBackorderOrder ? ["backorder"] : []),
       ...(termsTag ? [termsTag] : []),
       ...(shipOwnLabel ? ["customer-shipping-label"] : []),
+      ...(needsFreightQuote ? ["freight-quote"] : []),
     ];
     const shippingLine = shippingLineFor(items);
     const baseInput = {
@@ -1220,6 +1268,9 @@ async function handleLinesheetOrder(request: Request, url: URL) {
         isBackorderOrder
           ? "Wholesale BACKORDER — do not invoice until stock arrives, then send the invoice from this draft."
           : `Wholesale line sheet order${termsTag ? ` — payment terms ${termsTag.toUpperCase()}` : ""}.`,
+        needsFreightQuote
+          ? "Contains freight-priced items — set the shipping cost on this draft before sending the invoice."
+          : null,
         ...noteLines,
       ]
         .filter(Boolean)
@@ -1334,6 +1385,46 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     }
   }
 
+  // Editing: the replacement now exists, so retire the original — delete its
+  // Shopify draft and mark our rows REPLACED (drops it from order history).
+  // Best-effort: if the delete fails the old order lingers for staff cleanup,
+  // but the customer's new order already stands.
+  let replacedOrderName: string | null = null;
+  if (replaceTarget) {
+    try {
+      const res = await admin.graphql(
+        `#graphql
+        mutation ReplaceOldDraft($input: DraftOrderDeleteInput!) {
+          draftOrderDelete(input: $input) {
+            deletedId
+            userErrors { field message }
+          }
+        }`,
+        { variables: { input: { id: replaceTarget.gid } } }
+      );
+      const body = await res.json();
+      const errors = body.data?.draftOrderDelete?.userErrors ?? [];
+      if (errors.length > 0) {
+        console.error("[app-proxy/linesheet-order] replaced-draft delete userErrors:", errors);
+      }
+    } catch (err) {
+      console.error("[app-proxy/linesheet-order] replaced-draft delete failed:", err);
+    }
+    await db.wholesaleOrder.update({
+      where: { id: replaceTarget.rowId },
+      data: { status: "REPLACED" },
+    });
+    await db.linesheetDraft.updateMany({
+      where: {
+        shopifyCustomerId: wholesaleSession.shopifyCustomerId,
+        shopifyDraftOrderId: replacesDraftOrderId,
+        status: "SUBMITTED",
+      },
+      data: { status: "REPLACED" },
+    });
+    replacedOrderName = replaceTarget.name;
+  }
+
   // Primary order for history/response: the payable one, else the backorder.
   const draftOrder = stockOrder ?? backorderOrder;
 
@@ -1360,13 +1451,18 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     });
   }
 
+  const stockFreight = !shipOwnLabel && stockItems.some((l) => l.noFreeShipping);
   return proxyJson({
     ok: true,
     order_name: queuedOrder ? queuedOrder.name : draftOrder.name,
     // Pay-now link only exists for the in-stock order; NET-terms orders are
-    // auto-completed (invoiced per terms) and an all-backorder submission is
-    // invoiced by the merchant when stock arrives.
-    invoice_url: stockOrder && !queuedOrder ? stockOrder.invoiceUrl : null,
+    // auto-completed (invoiced per terms), an all-backorder submission is
+    // invoiced by the merchant when stock arrives, and freight orders are
+    // invoiced after staff quote shipping (instant pay would let the store's
+    // retail rate table price the freight).
+    invoice_url: stockOrder && !queuedOrder && !stockFreight ? stockOrder.invoiceUrl : null,
+    freight_quote: stockFreight,
+    replaced_order_name: replacedOrderName,
     order_queued: !!queuedOrder,
     subtotal_cents: subtotalCents,
     item_count: lineItems.length,

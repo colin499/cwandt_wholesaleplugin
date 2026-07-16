@@ -571,6 +571,50 @@
       });
   }
 
+  /* -------------------------------------------------------------------------
+     Edit mode — set by the Orders page ("Edit order"): sessionStorage carries
+     the unpaid draft order this sheet submission should REPLACE. The banner
+     keeps the state visible and cancellable, so an abandoned edit can't
+     silently swallow a later, unrelated order.
+     ---------------------------------------------------------------------- */
+
+  var EDIT_KEY = "wh-edit-order";
+
+  function getEditContext() {
+    try {
+      var ctx = JSON.parse(sessionStorage.getItem(EDIT_KEY) || "null");
+      return ctx && ctx.id ? ctx : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function clearEditContext() {
+    try { sessionStorage.removeItem(EDIT_KEY); } catch (e) { /* ignore */ }
+    var banner = document.getElementById("wh-ls-edit-banner");
+    if (banner) banner.remove();
+  }
+
+  function renderEditBanner(summaryEl) {
+    var ctx = getEditContext();
+    if (!ctx || !summaryEl || !summaryEl.parentNode) return;
+    var banner = document.createElement("div");
+    banner.id = "wh-ls-edit-banner";
+    banner.className = "wh-ls-order-result wh-ls-order-result--success";
+    banner.appendChild(document.createTextNode(
+      "Editing order " + (ctx.name || "") + " — submitting this sheet replaces it. "
+    ));
+    var cancel = document.createElement("a");
+    cancel.href = "#";
+    cancel.textContent = "Cancel edit (keep original order)";
+    cancel.addEventListener("click", function (e) {
+      e.preventDefault();
+      clearEditContext();
+    });
+    banner.appendChild(cancel);
+    summaryEl.parentNode.insertBefore(banner, summaryEl);
+  }
+
   function showOrderResult(resultEl, ok, message, invoiceUrl) {
     if (!resultEl) return;
     resultEl.textContent = "";
@@ -626,17 +670,21 @@
     submitBtn.textContent = "Submitting order…";
     if (resultEl) resultEl.hidden = true;
 
+    var orderPayload = {
+      lines: lines.map(function (l) {
+        return { variant_id: l.variant_id, quantity: l.quantity };
+      }),
+      po_number: getPoNumber(),
+      ship_own_label: getShipOwnLabel(),
+    };
+    var editCtx = getEditContext();
+    if (editCtx) orderPayload.replaces_draft_order_id = editCtx.id;
+
     fetch("/apps/wholesale/linesheet-order", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        lines: lines.map(function (l) {
-          return { variant_id: l.variant_id, quantity: l.quantity };
-        }),
-        po_number: getPoNumber(),
-        ship_own_label: getShipOwnLabel(),
-      }),
+      body: JSON.stringify(orderPayload),
     })
       .then(function (r) {
         return r
@@ -646,6 +694,7 @@
             if (!r.ok) {
               var e = new Error((data && data.error) || "HTTP " + r.status);
               e.userFacing = !!(data && data.error);
+              e.editExpired = !!(data && data.edit_expired);
               throw e;
             }
             return data;
@@ -672,7 +721,14 @@
               " on separate backorder " + data.backorder_name +
               " — we'll invoice that when it ships.";
           }
+          if (data.freight_quote) {
+            msg += " This order includes freight-priced items — we'll email your invoice once shipping is quoted.";
+          }
         }
+        if (data.replaced_order_name) {
+          msg += " It replaces order " + data.replaced_order_name + ".";
+        }
+        clearEditContext();
         showOrderResult(resultEl, true, msg, data.invoice_url);
         content.querySelectorAll(".wh-ls-qty-input").forEach(function (i) { i.value = ""; });
         updateSummary(content, summaryEl);
@@ -683,6 +739,9 @@
         submitBtn.textContent = original;
       })
       .catch(function (err) {
+        // The order being edited no longer exists / was already paid — drop
+        // edit mode so the next submit cleanly creates a new order.
+        if (err && err.editExpired) clearEditContext();
         showOrderResult(
           resultEl, false,
           err && err.userFacing ? err.message : "Could not submit order. Please try again or contact us."
@@ -803,6 +862,9 @@
 
       // Restore the saved draft into the qty inputs.
       loadDraft(content, summaryEl, true);
+
+      // Arriving from Orders → "Edit order": show the editing banner.
+      renderEditBanner(summaryEl);
 
       // Wire qty inputs → live summary (subtotal, MOQ shortfalls, minimum)
       content.addEventListener("input", function (e) {
