@@ -91,7 +91,7 @@ export async function syncCustomerToShopify(
   // whose registry knows legacy 'Wholesale' yields 'Wholesale'. Additions can
   // stay canonical (readers compare case-insensitively), but removals only
   // match exact casing — target whatever casing the customer actually has.
-  const toRemoveLower = MANAGED_TAGS.filter((t) => !desired.includes(t));
+  const toRemoveLower: string[] = MANAGED_TAGS.filter((t) => !desired.includes(t));
   const tagsRes = await admin.graphql(
     `query CurrentCustomerTags($id: ID!) { customer(id: $id) { tags } }`,
     { variables: { id: gid } }
