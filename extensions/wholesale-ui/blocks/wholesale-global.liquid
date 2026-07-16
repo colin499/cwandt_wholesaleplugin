@@ -18,7 +18,10 @@
   AND from the product-page price block on a PDP is safe.
 {% endcomment %}
 
-{% if customer and customer.tags contains 'wholesale' %}
+{% comment %} Shop-wide tag casing registry: writes of 'wholesale' can surface
+   as legacy 'Wholesale', so the check must be case-insensitive. {% endcomment %}
+{% assign wh_tag_str = customer.tags | join: '|' | downcase | prepend: '|' | append: '|' %}
+{% if customer and wh_tag_str contains '|wholesale|' %}
   <meta name="wh-customer" content="1">
   {{ 'wholesale.css' | asset_url | stylesheet_tag }}
   <script src="{{ 'wholesale.js' | asset_url }}" defer></script>

@@ -7,7 +7,8 @@
   Cart math is done in Liquid (server-side) — no flash.
 {% endcomment %}
 
-{% if customer and customer.tags contains 'wholesale' %}
+{% assign wh_tag_str = customer.tags | join: '|' | downcase | prepend: '|' | append: '|' %}
+{% if customer and wh_tag_str contains '|wholesale|' %}
 
   {%- assign cart_total = cart.total_price -%}
   {%- assign minimum_cents = block.settings.minimum_order_value | times: 100 -%}

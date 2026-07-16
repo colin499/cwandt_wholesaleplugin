@@ -7,7 +7,8 @@
   This block should be added to the header or announcement bar section.
 {% endcomment %}
 
-{% if customer and customer.tags contains 'wholesale' %}
+{% assign wh_tag_str = customer.tags | join: '|' | downcase | prepend: '|' | append: '|' %}
+{% if customer and wh_tag_str contains '|wholesale|' %}
   <div class="wh-account-badge" aria-label="Wholesale account active">
     <span class="wh-badge-dot"></span>
     <span class="wh-badge-label">Wholesale</span>

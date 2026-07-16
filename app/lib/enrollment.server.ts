@@ -86,7 +86,21 @@ export async function syncCustomerToShopify(
   const desired = approved
     ? ["wholesale", typeTag(customer.customerType)].filter(Boolean) as string[]
     : [];
-  const toRemove = MANAGED_TAGS.filter((t) => !desired.includes(t));
+
+  // Shopify normalizes tag casing shop-wide: writing 'wholesale' on a store
+  // whose registry knows legacy 'Wholesale' yields 'Wholesale'. Additions can
+  // stay canonical (readers compare case-insensitively), but removals only
+  // match exact casing — target whatever casing the customer actually has.
+  const toRemoveLower = MANAGED_TAGS.filter((t) => !desired.includes(t));
+  const tagsRes = await admin.graphql(
+    `query CurrentCustomerTags($id: ID!) { customer(id: $id) { tags } }`,
+    { variables: { id: gid } }
+  );
+  const tagsBody = await tagsRes.json();
+  const currentTags: string[] = tagsBody.data?.customer?.tags ?? [];
+  const toRemove = currentTags.filter((t) =>
+    toRemoveLower.includes(t.toLowerCase())
+  );
 
   const metafields: Array<Record<string, string>> = [
     {
@@ -141,18 +155,20 @@ export async function syncCustomerToShopify(
       )
     );
   }
-  ops.push(
-    runMutation(
-      "tagsRemove",
-      `mutation RemoveManagedTags($id: ID!, $tags: [String!]!) {
-        tagsRemove(id: $id, tags: $tags) {
-          node { id }
-          userErrors { field message }
-        }
-      }`,
-      { id: gid, tags: toRemove }
-    )
-  );
+  if (toRemove.length > 0) {
+    ops.push(
+      runMutation(
+        "tagsRemove",
+        `mutation RemoveManagedTags($id: ID!, $tags: [String!]!) {
+          tagsRemove(id: $id, tags: $tags) {
+            node { id }
+            userErrors { field message }
+          }
+        }`,
+        { id: gid, tags: toRemove }
+      )
+    );
+  }
   ops.push(
     runMutation(
       "metafieldsSet",
@@ -252,7 +268,7 @@ export async function reconcileCustomerFromWebhook(
   // equal the set the DB says they should have. Anything else → re-project.
   const tags = String(payload.tags ?? "")
     .split(",")
-    .map((t) => t.trim())
+    .map((t) => t.trim().toLowerCase())
     .filter(Boolean);
   const presentManaged = MANAGED_TAGS.filter((t) => tags.includes(t)).sort();
   const desiredManaged = (
@@ -345,7 +361,7 @@ export async function backfillFromShopify(
 
       const shopifyCustomerId = String(node.legacyResourceId);
       seenIds.add(shopifyCustomerId);
-      const tags: string[] = node.tags ?? [];
+      const tags: string[] = (node.tags ?? []).map((t: string) => t.toLowerCase());
       const existing = await db.wholesaleCustomer.findUnique({
         where: { shopifyCustomerId },
       });
@@ -355,12 +371,9 @@ export async function backfillFromShopify(
           result.skippedNoEmail++;
           continue;
         }
-        // BSS-era tags are capitalized ('Wholesale'/'Distributor') — the tag
-        // search matches them case-insensitively, so type detection must too.
-        const lowerTags = tags.map((t) => t.toLowerCase());
-        const customerType = lowerTags.includes("distributor")
+        const customerType = tags.includes("distributor")
           ? "DISTRIBUTOR"
-          : lowerTags.includes("b2b")
+          : tags.includes("b2b")
             ? "B2B"
             : "WHOLESALE";
         result.enrolled.push({ email: node.email, customerType });

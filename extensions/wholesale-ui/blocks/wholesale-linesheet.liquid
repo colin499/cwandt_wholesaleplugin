@@ -14,7 +14,8 @@
   # Render for wholesale customers — and in the theme editor (design_mode),
   # where no customer is logged in, so the block stays visible and selectable.
   assign wh_show = false
-  if customer and customer.tags contains 'wholesale'
+  assign wh_tag_str = customer.tags | join: '|' | downcase | prepend: '|' | append: '|'
+  if customer and wh_tag_str contains '|wholesale|'
     assign wh_show = true
   endif
   if request.design_mode

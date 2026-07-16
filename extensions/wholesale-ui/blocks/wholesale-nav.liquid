@@ -10,7 +10,8 @@
   No JavaScript required — customer check is server-side Liquid.
 {% endcomment %}
 
-{% if customer and customer.tags contains 'wholesale' %}
+{% assign wh_tag_str = customer.tags | join: '|' | downcase | prepend: '|' | append: '|' %}
+{% if customer and wh_tag_str contains '|wholesale|' %}
 
   {{ 'wholesale.css' | asset_url | stylesheet_tag }}
 

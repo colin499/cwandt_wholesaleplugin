@@ -82,6 +82,18 @@ of a platform constraint:
 Both are written exclusively by `syncCustomerToShopify()` in
 `app/lib/enrollment.server.ts`. **Nothing reads them back as authority.**
 
+**Tag casing is normalized SHOP-WIDE by Shopify (discovered on the live store,
+2026-07-16).** The store's tag registry knows the BSS-era capitalized
+`Wholesale`/`Distributor`, so writing `wholesale` yields `Wholesale` — verified:
+even a full `customerUpdate` tags replacement comes back capitalized, and this
+persists as long as any resource carries the old casing. Consequences (do not
+regress): every tag READER is case-insensitive — Liquid blocks use the
+`join: '|' | downcase` pattern (never `customer.tags contains 'wholesale'`
+directly), server code lowercases before `includes()`. Writers keep writing
+canonical lowercase (Shopify maps it), and `syncCustomerToShopify` targets
+removals at the exact casing present on the customer (removal does NOT match
+case-insensitively).
+
 Rules that follow (do not regress these):
 
 - **Enrollment happens only in the app** — via the Customers page (search any

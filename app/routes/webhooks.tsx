@@ -99,9 +99,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 async function handleOrderWebhook(payload: Record<string, unknown>) {
   const shopifyOrderId = String(payload.id ?? "");
+  // Tag casing normalizes shop-wide (legacy 'Wholesale' can win) — compare
+  // case-insensitively.
   const tags = String(payload.tags ?? "")
     .split(",")
-    .map((t) => t.trim())
+    .map((t) => t.trim().toLowerCase())
     .filter(Boolean);
 
   const isWholesale = tags.includes("wholesale");
