@@ -13,6 +13,7 @@
 
   // Customer-facing status copy — keys come from /apps/wholesale/orders.
   var STATUS_TEXT = {
+    DRAFT: "Draft",
     SUBMITTED: "Submitted",
     INVOICE_SENT: "Invoice sent",
     PREPARING: "Preparing to ship",
@@ -20,6 +21,21 @@
     SHIPPED: "Shipped",
     CANCELLED: "Cancelled",
   };
+
+  // Edit context (set by "Edit order") rides in sessionStorage; the linesheet
+  // banner and the submit here both read it.
+  var EDIT_KEY = "wh-edit-order";
+  function getEditContext() {
+    try {
+      var ctx = JSON.parse(sessionStorage.getItem(EDIT_KEY) || "null");
+      return ctx && ctx.id ? ctx : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function clearEditContext() {
+    try { sessionStorage.removeItem(EDIT_KEY); } catch (e) { /* ignore */ }
+  }
 
   function statusText(key) {
     return STATUS_TEXT[key] || key;
@@ -52,25 +68,62 @@
      Orders list table
      ---------------------------------------------------------------------- */
 
+  // ACTIONS column: the one thing the customer can do next with this order.
+  function actionsHTML(o) {
+    if (o.status === "DRAFT") {
+      return (
+        '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-ls-btn--cart wh-orders-submit"' +
+        ' data-order-id="' + esc(o.id) + '">Submit order</button>'
+      );
+    }
+    if (o.status === "SUBMITTED" || o.status === "INVOICE_SENT") {
+      if (o.invoice_url) {
+        return (
+          '<a class="wh-ls-btn wh-ls-btn--small wh-ls-btn--cart" href="' + esc(o.invoice_url) +
+          '" target="_blank" rel="noopener">Make payment</a>'
+        );
+      }
+      return (
+        '<span class="wh-orders-note">' +
+        (o.freight_quote ? "Freight quote pending" : "Awaiting invoice") +
+        "</span>"
+      );
+    }
+    if (o.status === "PREPARING" || o.status === "PARTIALLY_SHIPPED" || o.status === "SHIPPED" || o.status === "CANCELLED") {
+      return (
+        '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-orders-reorder"' +
+        ' data-order-id="' + esc(o.id) + '"' +
+        ' title="Start a new order sheet with these quantities">Reorder</button>'
+      );
+    }
+    return "";
+  }
+
   function renderList(container, orders) {
     if (!orders || orders.length === 0) {
       container.innerHTML = '<p class="wh-ls-empty">No orders yet.</p>';
       return;
     }
 
+    var editCtx = getEditContext();
     var html = '<table class="wh-ls-table wh-orders-table"><thead><tr>';
-    html += "<th>Order</th><th>Date</th><th>PO #</th><th>Items</th><th>Total</th><th>Status</th>";
+    html += "<th>Order</th><th>Date</th><th>PO #</th><th>Items</th><th>Total</th><th>Status</th><th>Actions</th>";
     html += "</tr></thead><tbody>";
 
     orders.forEach(function (o) {
+      var name = esc(o.order_name);
+      if (o.status === "DRAFT" && editCtx) {
+        name += ' <span class="wh-orders-note">(replaces ' + esc(editCtx.name || "") + ")</span>";
+      }
       html +=
-        '<tr class="wh-orders-row" data-order-id="' + esc(o.id) + '" tabindex="0">' +
-        "<td>" + esc(o.order_name) + "</td>" +
+        '<tr class="wh-orders-row" data-order-id="' + esc(o.id) + '" data-status="' + esc(o.status) + '" tabindex="0">' +
+        "<td>" + name + "</td>" +
         "<td>" + esc(formatDate(o.submitted_at)) + "</td>" +
         "<td>" + esc(o.po_number || "—") + "</td>" +
         "<td>" + o.item_count + "</td>" +
         "<td>" + formatMoney(o.subtotal_cents) + "</td>" +
         '<td class="wh-orders-status">' + esc(statusText(o.status)) + "</td>" +
+        '<td class="wh-orders-actions">' + actionsHTML(o) + "</td>" +
         "</tr>";
     });
 
@@ -82,9 +135,12 @@
      Expandable order detail
      ---------------------------------------------------------------------- */
 
-  function buildDetailHTML(order) {
+  function buildDetailHTML(order, linesheetUrl) {
     var html = '<div class="wh-orders-detail-head">';
     html += "<span>" + esc(statusText(order.status));
+    if (order.status === "DRAFT") {
+      html += ' <span class="wh-orders-note">— not submitted yet; CW&amp;T can\'t see this order until you submit it</span>';
+    }
     (order.tracking || []).forEach(function (t) {
       var carrier = t.company && t.company !== "Other" ? t.company : "Tracking";
       var label = carrier + (t.number ? " " + t.number : "");
@@ -101,18 +157,24 @@
       html += ' · <a href="' + esc(order.invoice_url) + '" target="_blank" rel="noopener">Review &amp; pay &rarr;</a>';
     }
     html += "</span>";
-    if (order.draft_order_id && (order.status === "SUBMITTED" || order.status === "INVOICE_SENT")) {
+    if (order.status === "DRAFT") {
+      html +=
+        '<a class="wh-ls-btn wh-ls-btn--small" href="' + esc(linesheetUrl) + '">Edit on sheet</a> ' +
+        '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-ls-btn--cart wh-orders-submit"' +
+        ' data-order-id="' + esc(order.id) + '">Submit order</button>';
+    } else if (order.draft_order_id && (order.status === "SUBMITTED" || order.status === "INVOICE_SENT")) {
       html +=
         '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-orders-edit"' +
         ' data-order-id="' + esc(order.id) + '"' +
         ' data-draft-order-id="' + esc(order.draft_order_id) + '"' +
         ' data-order-name="' + esc(order.order_name) + '"' +
-        ' title="Reopen this order on the sheet — submitting the sheet replaces it">Edit order</button> ';
+        ' title="Reopen this order on the sheet — reviewing and submitting replaces it">Edit order</button>';
+    } else if (order.status === "PREPARING" || order.status === "PARTIALLY_SHIPPED" || order.status === "SHIPPED" || order.status === "CANCELLED") {
+      html +=
+        '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-orders-reorder"' +
+        ' data-order-id="' + esc(order.id) + '"' +
+        ' title="Start a new order sheet with these quantities">Reorder</button>';
     }
-    html +=
-      '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-orders-reorder"' +
-      ' data-order-id="' + esc(order.id) + '"' +
-      ' title="Start a new order sheet with these quantities">Reorder</button>';
     html += "</div>";
 
     html += '<table class="wh-ls-table wh-orders-detail-table"><thead><tr>';
@@ -140,7 +202,7 @@
     return html;
   }
 
-  function toggleDetail(row) {
+  function toggleDetail(row, linesheetUrl) {
     var next = row.nextElementSibling;
     if (next && next.classList.contains("wh-orders-detail")) {
       next.remove();
@@ -167,7 +229,7 @@
       })
       .then(function (data) {
         if (!data || !data.order) throw new Error("Bad response");
-        cell.innerHTML = buildDetailHTML(data.order);
+        cell.innerHTML = buildDetailHTML(data.order, linesheetUrl);
       })
       .catch(function (err) {
         cell.innerHTML = '<p class="wh-ls-error">Unable to load this order. Please try again.</p>';
@@ -237,6 +299,113 @@
   }
 
   /* -------------------------------------------------------------------------
+     Submit — turn the DRAFT sheet into a real order (Shopify draft order).
+     This is the one moment an order becomes visible to CW&T.
+     ---------------------------------------------------------------------- */
+
+  function buildSubmitMessage(data) {
+    var msg;
+    if (data.all_backorder) {
+      msg = "Backorder " + (data.order_name || "") + " submitted (" +
+        formatMoney(data.subtotal_cents) + "). Everything on this order is " +
+        "currently out of stock — we'll send your invoice when it's ready to ship.";
+    } else {
+      msg = "Order " + (data.order_name || "") + " submitted (" +
+        formatMoney(data.subtotal_cents) + ")." +
+        (data.payment_terms === "NET_30" ? " Payment terms: Net 30." :
+         data.payment_terms === "NET_60" ? " Payment terms: Net 60." : "");
+      if (data.order_queued) {
+        msg += " It's headed to our fulfillment queue — we'll invoice per your terms.";
+      }
+      if (data.backorder_name) {
+        msg += " " + data.backorder_count + " out-of-stock item" +
+          (data.backorder_count === 1 ? " is" : "s are") +
+          " on separate backorder " + data.backorder_name +
+          " — we'll invoice that when it ships.";
+      }
+      if (data.freight_quote) {
+        msg += " This order includes freight-priced items — we'll email your invoice once shipping is quoted.";
+      }
+    }
+    if (data.replaced_order_name) {
+      msg += " It replaces order " + data.replaced_order_name + ".";
+    }
+    return msg;
+  }
+
+  function showResult(resultEl, ok, message, invoiceUrl) {
+    if (!resultEl) return;
+    resultEl.textContent = "";
+    resultEl.className = "wh-ls-order-result " + (ok ? "wh-ls-order-result--success" : "wh-ls-order-result--error");
+    resultEl.appendChild(document.createTextNode(message + " "));
+    if (invoiceUrl) {
+      var link = document.createElement("a");
+      link.href = invoiceUrl;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = "Make payment →";
+      resultEl.appendChild(link);
+    }
+    resultEl.hidden = false;
+    resultEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  function submitDraft(btn, resultEl, reloadList) {
+    var editCtx = getEditContext();
+    if (editCtx) {
+      if (!window.confirm("Submit this order? It will replace order " + (editCtx.name || "") + ".")) {
+        return;
+      }
+    }
+    var original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Submitting…";
+    if (resultEl) resultEl.hidden = true;
+
+    var body = { draft_id: btn.getAttribute("data-order-id") };
+    if (editCtx) body.replaces_draft_order_id = editCtx.id;
+
+    fetch("/apps/wholesale/linesheet-order", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then(function (r) {
+        return r
+          .json()
+          .catch(function () { throw new Error("HTTP " + r.status); })
+          .then(function (data) {
+            if (!r.ok) {
+              var e = new Error((data && data.error) || "HTTP " + r.status);
+              e.userFacing = !!(data && data.error);
+              e.editExpired = !!(data && data.edit_expired);
+              throw e;
+            }
+            return data;
+          });
+      })
+      .then(function (data) {
+        if (!data || !data.ok) throw new Error((data && data.error) || "Order failed");
+        clearEditContext();
+        showResult(resultEl, true, buildSubmitMessage(data), data.invoice_url);
+        reloadList();
+      })
+      .catch(function (err) {
+        // The order being edited no longer exists / was already paid — drop
+        // edit mode so the next submit cleanly creates a new order.
+        if (err && err.editExpired) clearEditContext();
+        showResult(
+          resultEl, false,
+          err && err.userFacing ? err.message : "Could not submit order. Please try again or contact us."
+        );
+        console.error("[orders] submit error:", err);
+        btn.disabled = false;
+        btn.textContent = original;
+      });
+  }
+
+  /* -------------------------------------------------------------------------
      Main init
      ---------------------------------------------------------------------- */
 
@@ -264,26 +433,50 @@
 
     var linesheetUrl = root.getAttribute("data-linesheet-url") || "/pages/linesheet";
 
-    fetch("/apps/wholesale/orders", { credentials: "same-origin" })
-      .then(function (r) {
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return r.json();
-      })
-      .then(function (data) {
-        if (loading) loading.setAttribute("hidden", "");
-        if (!data || !data.wholesale) throw new Error("Not wholesale");
-        renderList(content, data.orders);
-        content.removeAttribute("hidden");
-      })
-      .catch(function (err) {
-        if (loading) loading.setAttribute("hidden", "");
-        content.innerHTML =
-          '<p class="wh-ls-error">Unable to load orders. Please refresh the page or contact us.</p>';
-        content.removeAttribute("hidden");
-        console.error("[orders] list error:", err);
-      });
+    // Result banner for submit feedback, above the table.
+    var resultEl = document.createElement("div");
+    resultEl.id = "wh-orders-result";
+    resultEl.className = "wh-ls-order-result";
+    resultEl.setAttribute("role", "status");
+    resultEl.setAttribute("aria-live", "polite");
+    resultEl.hidden = true;
+    content.parentNode.insertBefore(resultEl, content);
+
+    function loadList(openDraft) {
+      fetch("/apps/wholesale/orders", { credentials: "same-origin" })
+        .then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
+        .then(function (data) {
+          if (loading) loading.setAttribute("hidden", "");
+          if (!data || !data.wholesale) throw new Error("Not wholesale");
+          renderList(content, data.orders);
+          content.removeAttribute("hidden");
+          if (openDraft) {
+            var draftRow = content.querySelector('.wh-orders-row[data-status="DRAFT"]');
+            if (draftRow) toggleDetail(draftRow, linesheetUrl);
+          }
+        })
+        .catch(function (err) {
+          if (loading) loading.setAttribute("hidden", "");
+          content.innerHTML =
+            '<p class="wh-ls-error">Unable to load orders. Please refresh the page or contact us.</p>';
+          content.removeAttribute("hidden");
+          console.error("[orders] list error:", err);
+        });
+    }
+
+    // Arriving from the sheet's "Review Wholesale Order →" button: open the
+    // draft for review immediately.
+    loadList(window.location.hash === "#draft");
 
     content.addEventListener("click", function (e) {
+      var submitBtn = e.target && e.target.closest ? e.target.closest(".wh-orders-submit") : null;
+      if (submitBtn) {
+        submitDraft(submitBtn, resultEl, function () { loadList(false); });
+        return;
+      }
       var editBtn = e.target && e.target.closest ? e.target.closest(".wh-orders-edit") : null;
       if (editBtn) {
         editOrder(editBtn, linesheetUrl);
@@ -294,10 +487,10 @@
         reorder(reorderBtn, linesheetUrl);
         return;
       }
-      // Links inside the detail (tracking / invoice) should behave normally.
+      // Links inside the detail (tracking / invoice / edit-on-sheet) behave normally.
       if (e.target && e.target.closest && e.target.closest("a")) return;
       var row = e.target && e.target.closest ? e.target.closest(".wh-orders-row") : null;
-      if (row) toggleDetail(row);
+      if (row) toggleDetail(row, linesheetUrl);
     });
 
     content.addEventListener("keydown", function (e) {
@@ -307,7 +500,7 @@
         : null;
       if (row) {
         e.preventDefault();
-        toggleDetail(row);
+        toggleDetail(row, linesheetUrl);
       }
     });
   }

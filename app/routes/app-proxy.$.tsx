@@ -234,6 +234,7 @@ async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
     {
       key: string;
       invoiceUrl: string | null;
+      freightQuote: boolean;
       tracking: Array<{ number: string | null; url: string | null; company: string | null }>;
     }
   >();
@@ -246,6 +247,7 @@ async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
             id
             status
             invoiceUrl
+            tags
             order {
               cancelledAt
               displayFulfillmentStatus
@@ -280,7 +282,16 @@ async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
       } else if (node.status === "INVOICE_SENT") {
         key = "INVOICE_SENT";
       }
-      map.set(numericId, { key, invoiceUrl: node.invoiceUrl ?? null, tracking });
+      const freightQuote = (node.tags ?? []).some(
+        (t: string) => t.toLowerCase() === "freight-quote"
+      );
+      // Freight orders must not be payable before staff price the shipping —
+      // Shopify mints an invoiceUrl on every draft, but paying it would let
+      // the store's retail rate table price the freight. The link comes back
+      // once staff send the invoice (INVOICE_SENT).
+      const invoiceUrl =
+        key === "SUBMITTED" && freightQuote ? null : node.invoiceUrl ?? null;
+      map.set(numericId, { key, invoiceUrl, freightQuote, tracking });
     }
   } catch (err) {
     console.error("[app-proxy/orders] status lookup failed:", err);
@@ -620,11 +631,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
     const detailId = url.searchParams.get("id");
     if (detailId) {
+      // DRAFT sheets are reviewable here too — the Orders page is the order
+      // review/submit surface, not just post-submission history.
       const sheet = await db.linesheetDraft.findFirst({
         where: {
           id: detailId,
           shopifyCustomerId: session.shopifyCustomerId,
-          status: "SUBMITTED",
+          status: { in: ["DRAFT", "SUBMITTED"] },
         },
       });
       if (!sheet) return json({ error: "Order sheet not found" }, { status: 404 });
@@ -635,8 +648,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         sheet.shopifyDraftOrderId ? [sheet.shopifyDraftOrderId] : []
       );
       const st =
-        statusMap.get(sheet.shopifyDraftOrderId ?? "") ??
-        { key: "SUBMITTED", invoiceUrl: null, tracking: [] };
+        sheet.status === "DRAFT"
+          ? { key: "DRAFT", invoiceUrl: null, freightQuote: false, tracking: [] }
+          : statusMap.get(sheet.shopifyDraftOrderId ?? "") ??
+            { key: "SUBMITTED", invoiceUrl: null, freightQuote: false, tracking: [] };
 
       // Enrich lines with current catalog info. Unit prices are today's
       // wholesale prices (null if the variant left the program) — the
@@ -688,6 +703,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           subtotal_cents: sheet.subtotalCents,
           status: st.key,
           invoice_url: st.invoiceUrl,
+          freight_quote: st.freightQuote,
           tracking: st.tracking,
           draft_order_id: sheet.shopifyDraftOrderId,
           lines: lines.map((l) => {
@@ -729,27 +745,56 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       sheets.map((s) => s.shopifyDraftOrderId).filter((id): id is string => !!id)
     );
 
+    // The active draft (if it has anything on it) leads the list: the Orders
+    // page is where a draft is reviewed and submitted, and until submission
+    // nothing exists in Shopify.
+    const activeDraft = await getActiveDraft(session.shopifyCustomerId);
+    const draftLines = activeDraft ? parseDraftLines(activeDraft.lines) : [];
+    const draftRow =
+      activeDraft && draftLines.length > 0
+        ? [
+            {
+              id: activeDraft.id,
+              order_name: "Draft",
+              po_number: activeDraft.poNumber || "",
+              submitted_at: activeDraft.updatedAt,
+              subtotal_cents: activeDraft.subtotalCents,
+              line_count: draftLines.length,
+              item_count: draftLines.reduce((n, l) => n + l.quantity, 0),
+              status: "DRAFT",
+              invoice_url: null,
+              freight_quote: false,
+              tracking: [] as Array<never>,
+              draft_order_id: null,
+            },
+          ]
+        : [];
+
     return proxyJson({
       wholesale: true,
-      orders: sheets.map((s) => {
-        const lines = parseDraftLines(s.lines);
-        const st =
-          statusMap.get(s.shopifyDraftOrderId ?? "") ??
-          { key: "SUBMITTED", invoiceUrl: null, tracking: [] };
-        return {
-          id: s.id,
-          order_name: s.orderName || "—",
-          po_number: s.poNumber || "",
-          submitted_at: s.updatedAt,
-          subtotal_cents: s.subtotalCents,
-          line_count: lines.length,
-          item_count: lines.reduce((n, l) => n + l.quantity, 0),
-          status: st.key,
-          invoice_url: st.invoiceUrl,
-          tracking: st.tracking,
-          draft_order_id: s.shopifyDraftOrderId,
-        };
-      }),
+      orders: [
+        ...draftRow,
+        ...sheets.map((s) => {
+          const lines = parseDraftLines(s.lines);
+          const st =
+            statusMap.get(s.shopifyDraftOrderId ?? "") ??
+            { key: "SUBMITTED", invoiceUrl: null, freightQuote: false, tracking: [] };
+          return {
+            id: s.id,
+            order_name: s.orderName || "—",
+            po_number: s.poNumber || "",
+            submitted_at: s.updatedAt,
+            subtotal_cents: s.subtotalCents,
+            line_count: lines.length,
+            item_count: lines.reduce((n, l) => n + l.quantity, 0),
+            status: st.key,
+            invoice_url: st.invoiceUrl,
+            freight_quote: st.freightQuote,
+            tracking: st.tracking,
+            draft_order_id: s.shopifyDraftOrderId,
+          };
+        }),
+      ],
     });
   }
 
@@ -1004,9 +1049,32 @@ async function handleLinesheetOrder(request: Request, url: URL) {
   } catch {
     return json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const rawLines: Array<{ variant_id: unknown; quantity: unknown }> = Array.isArray(payload?.lines)
+
+  // Submission comes from the Orders page review: { draft_id } points at the
+  // customer's active DRAFT sheet and the server reads lines/PO/label from it.
+  // A body with explicit `lines` is still honored (legacy path).
+  let rawLines: Array<{ variant_id: unknown; quantity: unknown }> = Array.isArray(payload?.lines)
     ? payload.lines
     : [];
+  let poNumber = String(payload?.po_number ?? "").slice(0, 120).trim();
+  let shipOwnLabel = payload?.ship_own_label === true;
+
+  if (payload?.draft_id && rawLines.length === 0) {
+    const draftSheet = await db.linesheetDraft.findFirst({
+      where: {
+        id: String(payload.draft_id),
+        shopifyCustomerId: wholesaleSession.shopifyCustomerId,
+        status: "DRAFT",
+      },
+    });
+    if (!draftSheet) {
+      return json({ error: "Draft not found — it may already be submitted. Refresh the page." }, { status: 404 });
+    }
+    rawLines = parseDraftLines(draftSheet.lines) as Array<{ variant_id: unknown; quantity: unknown }>;
+    poNumber = (draftSheet.poNumber ?? "").slice(0, 120).trim();
+    shipOwnLabel = draftSheet.shipOwnLabel;
+  }
+
   const lines = rawLines
     .map((l) => ({
       variantId: String(l.variant_id ?? "").replace(/\D/g, ""),
@@ -1014,8 +1082,6 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     }))
     .filter((l) => l.variantId && Number.isFinite(l.quantity) && l.quantity > 0);
 
-  const poNumber = String(payload?.po_number ?? "").slice(0, 120).trim();
-  const shipOwnLabel = payload?.ship_own_label === true;
   const replacesDraftOrderId = String(payload?.replaces_draft_order_id ?? "").replace(/\D/g, "");
 
   if (lines.length === 0) {

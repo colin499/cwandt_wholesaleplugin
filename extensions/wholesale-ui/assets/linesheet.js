@@ -602,7 +602,7 @@
     banner.id = "wh-ls-edit-banner";
     banner.className = "wh-ls-order-result wh-ls-order-result--success";
     banner.appendChild(document.createTextNode(
-      "Editing order " + (ctx.name || "") + " — submitting this sheet replaces it. "
+      "Editing order " + (ctx.name || "") + " — review and submit to replace it. "
     ));
     var cancel = document.createElement("a");
     cancel.href = "#";
@@ -630,10 +630,13 @@
     resultEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 
-  function submitOrder(content, submitBtn, summaryEl, resultEl) {
+  // The sheet is an editing surface only — orders are SUBMITTED from the
+  // Orders page review (one place an order becomes real). This validates,
+  // force-saves the draft, and hands off to review.
+  function reviewOrder(content, reviewBtn, resultEl) {
     var lines = getOrderLines(content);
     if (lines.length === 0) {
-      showOrderResult(resultEl, false, "Enter quantities before submitting.");
+      showOrderResult(resultEl, false, "Enter quantities before reviewing your order.");
       return;
     }
     var short = lines.filter(function (l) { return l.quantity < l.moq; });
@@ -646,12 +649,12 @@
     }
 
     // Soft case nudge: quantities that don't pack into full cases get ONE
-    // suggestion; submitting again sends the order as entered. Never a block.
+    // suggestion; continuing again proceeds as entered. Never a block.
     var offCase = lines.filter(function (l) {
       return l.caseSize > 0 && l.quantity % l.caseSize !== 0;
     });
-    if (offCase.length > 0 && !submitBtn.__whCaseNudged) {
-      submitBtn.__whCaseNudged = true;
+    if (offCase.length > 0 && !reviewBtn.__whCaseNudged) {
+      reviewBtn.__whCaseNudged = true;
       var parts = offCase.map(function (l) {
         var up = Math.ceil(l.quantity / l.caseSize) * l.caseSize;
         return l.quantity + " → " + up + " (" + (up / l.caseSize) + " full case" + (up / l.caseSize === 1 ? "" : "s") + " of " + l.caseSize + ")";
@@ -659,96 +662,37 @@
       showOrderResult(
         resultEl, false,
         "These items pack in cases: " + parts.join("; ") +
-        ". Adjust quantities, or press Submit again to order as entered."
+        ". Adjust quantities, or press Review again to continue as entered."
       );
       return;
     }
-    submitBtn.__whCaseNudged = false;
+    reviewBtn.__whCaseNudged = false;
 
-    var original = submitBtn.textContent;
-    submitBtn.disabled = true;
-    submitBtn.textContent = "Submitting order…";
+    var original = reviewBtn.textContent;
+    reviewBtn.disabled = true;
+    reviewBtn.textContent = "Saving…";
     if (resultEl) resultEl.hidden = true;
+    if (saveTimer) clearTimeout(saveTimer);
 
-    var orderPayload = {
-      lines: lines.map(function (l) {
-        return { variant_id: l.variant_id, quantity: l.quantity };
-      }),
-      po_number: getPoNumber(),
-      ship_own_label: getShipOwnLabel(),
-    };
-    var editCtx = getEditContext();
-    if (editCtx) orderPayload.replaces_draft_order_id = editCtx.id;
-
-    fetch("/apps/wholesale/linesheet-order", {
+    var ordersUrl = reviewBtn.getAttribute("data-orders-url") || "/pages/orders";
+    fetch("/apps/wholesale/linesheet-draft", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(orderPayload),
+      body: JSON.stringify(collectDraftPayload(content)),
     })
       .then(function (r) {
-        return r
-          .json()
-          .catch(function () { throw new Error("HTTP " + r.status); })
-          .then(function (data) {
-            if (!r.ok) {
-              var e = new Error((data && data.error) || "HTTP " + r.status);
-              e.userFacing = !!(data && data.error);
-              e.editExpired = !!(data && data.edit_expired);
-              throw e;
-            }
-            return data;
-          });
-      })
-      .then(function (data) {
-        if (!data || !data.ok) throw new Error((data && data.error) || "Order failed");
-        var msg;
-        if (data.all_backorder) {
-          msg = "Backorder " + (data.order_name || "") + " submitted (" +
-            formatMoney(data.subtotal_cents) + "). Everything on this order is " +
-            "currently out of stock — we'll send your invoice when it's ready to ship.";
-        } else {
-          msg = "Order " + (data.order_name || "") + " submitted (" +
-            formatMoney(data.subtotal_cents) + ")." +
-            (data.payment_terms === "NET_30" ? " Payment terms: Net 30." :
-             data.payment_terms === "NET_60" ? " Payment terms: Net 60." : "");
-          if (data.order_queued) {
-            msg += " It's headed to our fulfillment queue — we'll invoice per your terms.";
-          }
-          if (data.backorder_name) {
-            msg += " " + data.backorder_count + " out-of-stock item" +
-              (data.backorder_count === 1 ? " is" : "s are") +
-              " on separate backorder " + data.backorder_name +
-              " — we'll invoice that when it ships.";
-          }
-          if (data.freight_quote) {
-            msg += " This order includes freight-priced items — we'll email your invoice once shipping is quoted.";
-          }
-        }
-        if (data.replaced_order_name) {
-          msg += " It replaces order " + data.replaced_order_name + ".";
-        }
-        clearEditContext();
-        showOrderResult(resultEl, true, msg, data.invoice_url);
-        content.querySelectorAll(".wh-ls-qty-input").forEach(function (i) { i.value = ""; });
-        updateSummary(content, summaryEl);
-        // Server flipped the draft to SUBMITTED — clear autosave state.
-        if (saveTimer) clearTimeout(saveTimer);
-        setSaveState("");
-        submitBtn.disabled = false;
-        submitBtn.textContent = original;
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        window.location.href = ordersUrl + "#draft";
       })
       .catch(function (err) {
-        // The order being edited no longer exists / was already paid — drop
-        // edit mode so the next submit cleanly creates a new order.
-        if (err && err.editExpired) clearEditContext();
+        console.error("[linesheet] review save error:", err);
         showOrderResult(
           resultEl, false,
-          err && err.userFacing ? err.message : "Could not submit order. Please try again or contact us."
+          "Could not save your order sheet. Please check your connection and try again."
         );
-        console.error("[linesheet] order error:", err);
-        submitBtn.disabled = false;
-        submitBtn.textContent = original;
+        reviewBtn.disabled = false;
+        reviewBtn.textContent = original;
       });
   }
 
@@ -939,7 +883,7 @@
 
       if (submitBtn) {
         submitBtn.addEventListener("click", function () {
-          submitOrder(content, submitBtn, summaryEl, resultEl);
+          reviewOrder(content, submitBtn, resultEl);
         });
       }
     });

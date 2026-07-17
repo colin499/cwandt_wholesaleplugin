@@ -80,7 +80,7 @@
             <button type="button" class="wh-ls-export-item" data-export="gsheet">Open in Google Sheets</button>
           </div>
         </div>
-        <button type="button" class="wh-ls-btn wh-ls-btn--cart" id="wh-ls-submit-order">Submit Wholesale Order</button>
+        <button type="button" class="wh-ls-btn wh-ls-btn--cart" id="wh-ls-submit-order" data-orders-url="{{ block.settings.orders_url | default: '/pages/orders' }}">Review Wholesale Order &rarr;</button>
       </div>
     </div>
 

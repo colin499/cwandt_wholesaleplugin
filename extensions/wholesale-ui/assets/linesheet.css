@@ -574,3 +574,12 @@
 .wh-pdf-mode .wh-print-only-title { display: block; }
 .wh-pdf-mode .wh-ls-col-qty { display: none; }
 .wh-pdf-mode { padding: 0; }
+
+/* Orders page — ACTIONS column and inline notes */
+.wh-orders-actions { white-space: nowrap; }
+.wh-orders-actions .wh-ls-btn { vertical-align: middle; }
+.wh-orders-note {
+  font-size: 0.85em;
+  opacity: 0.7;
+  white-space: normal;
+}
