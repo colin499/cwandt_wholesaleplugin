@@ -433,6 +433,13 @@
   color: #000;
 }
 
+/* Plain-language status explanation — sentence case inside the uppercase head */
+.wh-orders-tip {
+  text-transform: none;
+  letter-spacing: normal;
+  opacity: 0.8;
+}
+
 .wh-orders-detail-table {
   table-layout: auto;
   margin-bottom: 10px;

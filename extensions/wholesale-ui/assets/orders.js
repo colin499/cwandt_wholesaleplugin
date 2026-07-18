@@ -20,7 +20,34 @@
     PARTIALLY_SHIPPED: "Partially shipped",
     SHIPPED: "Shipped",
     CANCELLED: "Cancelled",
+    REFUNDED: "Refunded",
   };
+
+  // Plain-language explanation shown when an order is expanded. One sentence,
+  // no status jargon — the STATUS column already names the state.
+  var STATUS_TIP = {
+    DRAFT: "Not submitted yet — CW&T can't see this order until you submit it.",
+    SUBMITTED: "We've received your order. Pay the invoice when you're ready and we'll start preparing your shipment.",
+    INVOICE_SENT: "We've emailed your invoice — once it's paid we'll start preparing your shipment.",
+    PREPARING: "Your order is confirmed and we're getting it ready to ship.",
+    PARTIALLY_SHIPPED: "Part of this order is on its way — the rest ships as soon as it's ready.",
+    SHIPPED: "Your order is on its way.",
+    CANCELLED: "This order was cancelled. If that's unexpected, get in touch.",
+    REFUNDED: "This order was returned and refunded.",
+  };
+
+  // SUBMITTED has two special flavors that change what happens next.
+  function statusTip(order) {
+    if (order.status === "SUBMITTED" || order.status === "INVOICE_SENT") {
+      if (order.freight_quote) {
+        return "This order includes freight-priced items — we'll email your invoice once shipping is quoted.";
+      }
+      if (order.backorder) {
+        return "Everything on this order is on backorder — we'll send your invoice when stock arrives and it's ready to ship.";
+      }
+    }
+    return STATUS_TIP[order.status] || "";
+  }
 
   // Edit context (set by "Edit order") rides in sessionStorage; the linesheet
   // banner and the submit here both read it.
@@ -85,11 +112,15 @@
       }
       return (
         '<span class="wh-orders-note">' +
-        (o.freight_quote ? "Freight quote pending" : "Awaiting invoice") +
+        (o.freight_quote
+          ? "Freight quote pending"
+          : o.backorder
+            ? "Invoiced when stock ships"
+            : "Awaiting invoice") +
         "</span>"
       );
     }
-    if (o.status === "PREPARING" || o.status === "PARTIALLY_SHIPPED" || o.status === "SHIPPED" || o.status === "CANCELLED") {
+    if (o.status === "PREPARING" || o.status === "PARTIALLY_SHIPPED" || o.status === "SHIPPED" || o.status === "CANCELLED" || o.status === "REFUNDED") {
       return (
         '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-orders-reorder"' +
         ' data-order-id="' + esc(o.id) + '"' +
@@ -135,12 +166,13 @@
      Expandable order detail
      ---------------------------------------------------------------------- */
 
+  // Detail header: plain-language explanation of the status (left) plus the
+  // one action that isn't already in the row's ACTIONS column (right).
+  // Submit / Make payment / Reorder live ONLY in the ACTIONS column — the row
+  // stays visible above the expanded detail, so never repeat them here.
   function buildDetailHTML(order, linesheetUrl) {
     var html = '<div class="wh-orders-detail-head">';
-    html += "<span>" + esc(statusText(order.status));
-    if (order.status === "DRAFT") {
-      html += ' <span class="wh-orders-note">— not submitted yet; CW&amp;T can\'t see this order until you submit it</span>';
-    }
+    html += '<span class="wh-orders-tip">' + esc(statusTip(order));
     (order.tracking || []).forEach(function (t) {
       var carrier = t.company && t.company !== "Other" ? t.company : "Tracking";
       var label = carrier + (t.number ? " " + t.number : "");
@@ -153,15 +185,10 @@
         ? ' · <a href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(label) + "</a>"
         : " · " + esc(label);
     });
-    if (order.invoice_url && (order.status === "SUBMITTED" || order.status === "INVOICE_SENT")) {
-      html += ' · <a href="' + esc(order.invoice_url) + '" target="_blank" rel="noopener">Review &amp; pay &rarr;</a>';
-    }
     html += "</span>";
     if (order.status === "DRAFT") {
       html +=
-        '<a class="wh-ls-btn wh-ls-btn--small" href="' + esc(linesheetUrl) + '">Edit on sheet</a> ' +
-        '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-ls-btn--cart wh-orders-submit"' +
-        ' data-order-id="' + esc(order.id) + '">Submit order</button>';
+        '<a class="wh-ls-btn wh-ls-btn--small" href="' + esc(linesheetUrl) + '">Edit draft</a>';
     } else if (order.draft_order_id && (order.status === "SUBMITTED" || order.status === "INVOICE_SENT")) {
       html +=
         '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-orders-edit"' +
@@ -169,11 +196,6 @@
         ' data-draft-order-id="' + esc(order.draft_order_id) + '"' +
         ' data-order-name="' + esc(order.order_name) + '"' +
         ' title="Reopen this order on the sheet — reviewing and submitting replaces it">Edit order</button>';
-    } else if (order.status === "PREPARING" || order.status === "PARTIALLY_SHIPPED" || order.status === "SHIPPED" || order.status === "CANCELLED") {
-      html +=
-        '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-orders-reorder"' +
-        ' data-order-id="' + esc(order.id) + '"' +
-        ' title="Start a new order sheet with these quantities">Reorder</button>';
     }
     html += "</div>";
 

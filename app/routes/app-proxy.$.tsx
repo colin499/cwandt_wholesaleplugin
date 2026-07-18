@@ -227,7 +227,9 @@ async function upsertActiveDraft(
 // order. Status keys (display copy lives in orders.js): SUBMITTED (draft still
 // open, not yet invoiced) → INVOICE_SENT → PREPARING (order created, not yet
 // fulfilled) → PARTIALLY_SHIPPED → SHIPPED; CANCELLED if the order was
-// cancelled. Sheets whose lookup fails fall back to SUBMITTED.
+// cancelled OR the draft was deleted in Shopify Admin (staff cancelling an
+// unpaid order); REFUNDED if a shipped order was returned and fully refunded.
+// Sheets whose lookup fails fall back to SUBMITTED.
 async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
   const map = new Map<
     string,
@@ -235,6 +237,7 @@ async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
       key: string;
       invoiceUrl: string | null;
       freightQuote: boolean;
+      backorder: boolean;
       tracking: Array<{ number: string | null; url: string | null; company: string | null }>;
     }
   >();
@@ -251,6 +254,7 @@ async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
             order {
               cancelledAt
               displayFulfillmentStatus
+              displayFinancialStatus
               fulfillments(first: 10) {
                 trackingInfo(first: 5) { number url company }
               }
@@ -261,7 +265,8 @@ async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
       { variables: { ids: draftOrderIds.map((id) => `gid://shopify/DraftOrder/${id}`) } }
     );
     const body = await res.json();
-    for (const node of body.data?.nodes ?? []) {
+    if (!body.data) throw new Error(JSON.stringify(body.errors ?? "no data"));
+    for (const node of body.data.nodes ?? []) {
       if (!node?.id) continue;
       const numericId = String(node.id.split("/").pop());
       const order = node.order;
@@ -276,22 +281,31 @@ async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
           }
         }
         if (order.cancelledAt) key = "CANCELLED";
+        else if (order.displayFinancialStatus === "REFUNDED") key = "REFUNDED";
         else if (order.displayFulfillmentStatus === "FULFILLED") key = "SHIPPED";
         else if (order.displayFulfillmentStatus === "PARTIALLY_FULFILLED") key = "PARTIALLY_SHIPPED";
         else key = "PREPARING";
       } else if (node.status === "INVOICE_SENT") {
         key = "INVOICE_SENT";
       }
-      const freightQuote = (node.tags ?? []).some(
-        (t: string) => t.toLowerCase() === "freight-quote"
-      );
-      // Freight orders must not be payable before staff price the shipping —
-      // Shopify mints an invoiceUrl on every draft, but paying it would let
-      // the store's retail rate table price the freight. The link comes back
-      // once staff send the invoice (INVOICE_SENT).
+      const tags = (node.tags ?? []).map((t: string) => t.toLowerCase());
+      const freightQuote = tags.includes("freight-quote");
+      const backorder = tags.includes("backorder");
+      // Some drafts must not be payable early even though Shopify mints an
+      // invoiceUrl on every draft: freight orders (paying would let the retail
+      // rate table price the freight) and backorders (invoiced when stock
+      // arrives). The link appears once staff send the invoice (INVOICE_SENT).
       const invoiceUrl =
-        key === "SUBMITTED" && freightQuote ? null : node.invoiceUrl ?? null;
-      map.set(numericId, { key, invoiceUrl, freightQuote, tracking });
+        key === "SUBMITTED" && (freightQuote || backorder) ? null : node.invoiceUrl ?? null;
+      map.set(numericId, { key, invoiceUrl, freightQuote, backorder, tracking });
+    }
+    // Ids the query resolved to nothing: the draft was deleted in Shopify
+    // Admin — that's how staff cancel an order that hasn't been paid yet.
+    // (Transient lookup failures throw above and leave the map empty instead.)
+    for (const id of draftOrderIds) {
+      if (!map.has(id)) {
+        map.set(id, { key: "CANCELLED", invoiceUrl: null, freightQuote: false, backorder: false, tracking: [] });
+      }
     }
   } catch (err) {
     console.error("[app-proxy/orders] status lookup failed:", err);
@@ -649,9 +663,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       );
       const st =
         sheet.status === "DRAFT"
-          ? { key: "DRAFT", invoiceUrl: null, freightQuote: false, tracking: [] }
+          ? { key: "DRAFT", invoiceUrl: null, freightQuote: false, backorder: false, tracking: [] }
           : statusMap.get(sheet.shopifyDraftOrderId ?? "") ??
-            { key: "SUBMITTED", invoiceUrl: null, freightQuote: false, tracking: [] };
+            { key: "SUBMITTED", invoiceUrl: null, freightQuote: false, backorder: false, tracking: [] };
 
       // Enrich lines with current catalog info. Unit prices are today's
       // wholesale prices (null if the variant left the program) — the
@@ -704,6 +718,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           status: st.key,
           invoice_url: st.invoiceUrl,
           freight_quote: st.freightQuote,
+          backorder: st.backorder,
           tracking: st.tracking,
           draft_order_id: sheet.shopifyDraftOrderId,
           lines: lines.map((l) => {
@@ -755,7 +770,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         ? [
             {
               id: activeDraft.id,
-              order_name: "Draft",
+              // No Shopify order exists yet — the STATUS column already says
+              // "Draft", so the ORDER column shows a placeholder.
+              order_name: "—",
               po_number: activeDraft.poNumber || "",
               submitted_at: activeDraft.updatedAt,
               subtotal_cents: activeDraft.subtotalCents,
@@ -764,6 +781,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
               status: "DRAFT",
               invoice_url: null,
               freight_quote: false,
+              backorder: false,
               tracking: [] as Array<never>,
               draft_order_id: null,
             },
@@ -778,7 +796,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           const lines = parseDraftLines(s.lines);
           const st =
             statusMap.get(s.shopifyDraftOrderId ?? "") ??
-            { key: "SUBMITTED", invoiceUrl: null, freightQuote: false, tracking: [] };
+            { key: "SUBMITTED", invoiceUrl: null, freightQuote: false, backorder: false, tracking: [] };
           return {
             id: s.id,
             order_name: s.orderName || "—",
@@ -790,6 +808,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
             status: st.key,
             invoice_url: st.invoiceUrl,
             freight_quote: st.freightQuote,
+            backorder: st.backorder,
             tracking: st.tracking,
             draft_order_id: s.shopifyDraftOrderId,
           };
@@ -1028,10 +1047,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 // terms. The theme cart is NOT used — it checks out at retail. Draft orders
 // also don't reserve inventory, so out-of-stock lines are fine (backorders
 // ride along in the same order).
-// How long an unpaid invoice holds its stock. Due-on-receipt customers pay
-// within days; after this window an untouched invoice can hit the same
-// quantity-adjust failure, so staff should follow up or re-issue.
-const INVOICE_INVENTORY_RESERVE_DAYS = 14;
+// How long an unpaid invoice holds its stock (per Taylor: 24 hours). After
+// the hold lapses the stock is sellable again; an untouched invoice can then
+// hit the quantity-adjust failure at payment time, so staff should follow up
+// or re-issue. Staff can extend a hold on the draft in Shopify Admin
+// ("Reserve items").
+const INVOICE_INVENTORY_RESERVE_HOURS = 24;
 
 async function handleLinesheetOrder(request: Request, url: URL) {
   const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");
@@ -1325,7 +1346,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
       ...(!isBackorderOrder
         ? {
             reserveInventoryUntil: new Date(
-              Date.now() + INVOICE_INVENTORY_RESERVE_DAYS * 24 * 60 * 60 * 1000
+              Date.now() + INVOICE_INVENTORY_RESERVE_HOURS * 60 * 60 * 1000
             ).toISOString(),
           }
         : {}),
