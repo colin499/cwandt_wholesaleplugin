@@ -51,9 +51,6 @@ const LINESHEET_QUERY = `
           status
           featuredImage { url altText }
           hiddenVariants: metafield(namespace: "custom", key: "wholesale_hidden_variants") { value }
-          collections(first: 1) {
-            nodes { title handle }
-          }
           variants(first: 100) {
             nodes {
               id
@@ -397,10 +394,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     );
     const cmsMap = await getCmsVariantMap(allVariantIds);
 
-    // Group products by their first collection. Only wholesale-available
-    // variants appear; products with none are left off the line sheet.
-    const collectionOrder: string[] = [];
-    const collectionMap: Record<string, { title: string; products: any[] }> = {};
+    // One flat, alphabetized list — no grouping. (First-collection buckets
+    // were arbitrary: multi-collection products landed wherever Shopify listed
+    // them first, and section order was uncontrolled. Removed 2026-07-18.)
+    // Only wholesale-available variants appear; products with none are left
+    // off the line sheet. The client renders a section with an empty title as
+    // a plain table, so the collections-array response shape is kept.
+    const flatProducts: any[] = [];
 
     for (const product of allNodes) {
       const hiddenIds = parseHiddenVariantIds(product.hiddenVariants?.value);
@@ -436,16 +436,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
       if (variants.length === 0) continue;
 
-      const col = product.collections?.nodes?.[0];
-      const key = col?.handle ?? "__uncategorized__";
-      const title = col?.title ?? "Other";
-
-      if (!collectionMap[key]) {
-        collectionMap[key] = { title, products: [] };
-        collectionOrder.push(key);
-      }
-
-      collectionMap[key].products.push({
+      flatProducts.push({
         id: parseInt(product.id.split("/").pop(), 10),
         title: product.title,
         handle: product.handle,
@@ -454,9 +445,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       });
     }
 
+    flatProducts.sort((a, b) =>
+      a.title.localeCompare(b.title, "en", { sensitivity: "base" })
+    );
+
     return proxyJson({
       wholesale: true,
-      collections: collectionOrder.map((k) => collectionMap[k]),
+      collections: [{ title: "", products: flatProducts }],
     });
   }
 

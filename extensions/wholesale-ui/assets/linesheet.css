@@ -554,8 +554,9 @@
     padding: 0;
   }
 
+  /* The sheet is one flat section now — it must be allowed to break across
+     pages (break-inside: avoid on a page-spanning block strands page 1). */
   .wh-ls-collection {
-    break-inside: avoid;
     margin-bottom: 24pt;
   }
 
