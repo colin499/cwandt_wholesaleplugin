@@ -117,116 +117,7 @@
   }
 
   /* -------------------------------------------------------------------------
-     4. Backorder submission
-     ---------------------------------------------------------------------- */
-
-  function submitBackorder(btn, msgEl, variantId, productId, qty) {
-    btn.disabled = true;
-    btn.textContent = "Placing backorder…";
-
-    var body = new URLSearchParams();
-    body.set("variant_id", String(variantId));
-    body.set("product_id", String(productId || ""));
-    body.set("quantity", String(qty || 1));
-
-    fetch("/apps/wholesale/backorder", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString(),
-    })
-      .then(function (r) {
-        // Read the body even on error statuses — the server sends specific,
-        // user-facing reasons (e.g. the MOQ minimum) in { error }.
-        return r
-          .json()
-          .catch(function () { throw new Error("HTTP " + r.status); })
-          .then(function (data) {
-            if (!r.ok) {
-              var e = new Error((data && data.error) || "HTTP " + r.status);
-              e.userFacing = !!(data && data.error);
-              throw e;
-            }
-            return data;
-          });
-      })
-      .then(function (data) {
-        if (data && data.ok) {
-          btn.setAttribute("hidden", "");
-          if (msgEl) {
-            msgEl.textContent = ""; // clear any previous error before writing
-            msgEl.className = "wh-backorder-msg wh-backorder-msg--success";
-            msgEl.removeAttribute("hidden");
-            var successText = document.createTextNode(
-              "Backorder placed" + (data.order_name ? " (" + data.order_name + ")" : "") + ". "
-            );
-            msgEl.appendChild(successText);
-            if (data.invoice_url) {
-              var link = document.createElement("a");
-              link.href = data.invoice_url;
-              link.className = "wh-backorder-link";
-              link.textContent = "Review & pay →";
-              msgEl.appendChild(link);
-            }
-          }
-        } else {
-          throw new Error((data && data.error) || "Backorder failed");
-        }
-      })
-      .catch(function (err) {
-        btn.disabled = false;
-        btn.textContent = "Place Backorder";
-        if (msgEl) {
-          msgEl.textContent = err && err.userFacing
-            ? err.message
-            : "Could not place backorder. Please contact us.";
-          msgEl.className = "wh-backorder-msg wh-backorder-msg--error";
-          msgEl.removeAttribute("hidden");
-        }
-        console.error("[wholesale] backorder error:", err);
-      });
-  }
-
-  /* -------------------------------------------------------------------------
-     5. Build the backorder form and attach it to the price block
-     ---------------------------------------------------------------------- */
-
-  function buildBackorderForm(variant, productId, productForm) {
-    var wrap = document.createElement("div");
-    wrap.className = "wh-backorder-form";
-
-    var note = document.createElement("p");
-    note.className = "wh-backorder-note";
-    note.textContent =
-      "This item is out of stock. Place a backorder and we’ll ship when available.";
-
-    var btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "wh-backorder-btn";
-    btn.textContent = "Place Backorder";
-
-    var msg = document.createElement("div");
-    msg.className = "wh-backorder-msg";
-    msg.setAttribute("hidden", "");
-
-    wrap.appendChild(note);
-    wrap.appendChild(btn);
-    wrap.appendChild(msg);
-
-    btn.addEventListener("click", function () {
-      var qty = 1;
-      if (productForm) {
-        var qtyInput = productForm.querySelector('[name="quantity"]');
-        if (qtyInput) qty = parseInt(qtyInput.value, 10) || 1;
-      }
-      submitBackorder(btn, msg, variant.id, productId, qty);
-    });
-
-    return wrap;
-  }
-
-  /* -------------------------------------------------------------------------
-     6. Price block updater — fills in variant prices and shows the block
+     4. Price block updater — fills in variant prices and shows the block
      ---------------------------------------------------------------------- */
 
   function applyVariantPrice(variantsData, selectedVariantId, productForm) {
@@ -264,8 +155,6 @@
       if (caseRow) caseRow.setAttribute("hidden", "");
       if (stockRow) stockRow.setAttribute("hidden", "");
       if (noteEl) noteEl.textContent = "This option is not available for wholesale.";
-      var unavailForm = block.querySelector(".wh-backorder-form");
-      if (unavailForm) unavailForm.setAttribute("hidden", "");
       block.removeAttribute("hidden");
       if (skeleton) skeleton.setAttribute("hidden", "");
       return;
@@ -301,7 +190,7 @@
     // pre-fill it. (Exempt customers receive moq: 1 from the server, so this
     // self-disables for them.) The cart page can still lower quantities —
     // this is the PDP path only; hard enforcement lives where the app creates
-    // orders (backorder, orderable linesheet).
+    // orders (the orderable linesheet).
     applyMoqToQuantityInput(productForm, variant.moq);
 
     var isOutOfStock = !variant.available || variant.in_stock <= 0;
@@ -323,48 +212,8 @@
       noteEl.textContent = "";
     }
 
-    // Backorder button — show when out of stock, hide when in stock
-    var productId = block.dataset ? block.dataset.whProductId : block.getAttribute("data-wh-product-id");
-    var existingForm = block.querySelector(".wh-backorder-form");
-
-    if (isOutOfStock) {
-      if (!existingForm) {
-        var backorderForm = buildBackorderForm(variant, productId, productForm);
-        block.appendChild(backorderForm);
-      } else {
-        // Update variant id for the existing button (variant changed while form was open)
-        existingForm.removeAttribute("hidden");
-        var oldBtn = existingForm.querySelector(".wh-backorder-btn");
-        var oldMsg = existingForm.querySelector(".wh-backorder-msg");
-        if (oldBtn) {
-          oldBtn.disabled = false;
-          oldBtn.textContent = "Place Backorder";
-          oldBtn.removeAttribute("hidden");
-          // Re-wire click with new variant
-          var newBtn = oldBtn.cloneNode(true);
-          oldBtn.parentNode.replaceChild(newBtn, oldBtn);
-          var capturedVariant = variant;
-          var capturedProductId = productId;
-          var capturedForm = productForm;
-          newBtn.addEventListener("click", function () {
-            var qty = 1;
-            if (capturedForm) {
-              var qtyInput = capturedForm.querySelector('[name="quantity"]');
-              if (qtyInput) qty = parseInt(qtyInput.value, 10) || 1;
-            }
-            submitBackorder(newBtn, oldMsg, capturedVariant.id, capturedProductId, qty);
-          });
-        }
-        if (oldMsg) {
-          oldMsg.textContent = "";
-          oldMsg.className = "wh-backorder-msg";
-          oldMsg.setAttribute("hidden", "");
-        }
-      }
-    } else {
-      if (existingForm) existingForm.setAttribute("hidden", "");
-    }
-
+    // No PDP backorder UI: out-of-stock items are ordered on the linesheet
+    // like everything else — submission splits them onto a backorder draft.
     block.removeAttribute("hidden");
     if (skeleton) skeleton.setAttribute("hidden", "");
   }
@@ -393,7 +242,7 @@
   }
 
   /* -------------------------------------------------------------------------
-     7. Get the currently selected variant ID from the product form
+     5. Get the currently selected variant ID from the product form
      ---------------------------------------------------------------------- */
 
   function getSelectedVariantId(productForm) {
@@ -404,7 +253,7 @@
   }
 
   /* -------------------------------------------------------------------------
-     8. Listen for variant selector changes and re-apply prices
+     6. Listen for variant selector changes and re-apply prices
      ---------------------------------------------------------------------- */
 
   function watchVariantChanges(productForm, variantsData) {
@@ -424,7 +273,7 @@
   }
 
   /* -------------------------------------------------------------------------
-     9. Clear cached status on logout
+     7. Clear cached status on logout
      ---------------------------------------------------------------------- */
 
   document.querySelectorAll('a[href*="/account/logout"]').forEach(function (a) {
