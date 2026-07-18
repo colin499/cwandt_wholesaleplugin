@@ -26,13 +26,13 @@
   // Plain-language explanation shown when an order is expanded. One sentence,
   // no status jargon — the STATUS column already names the state.
   var STATUS_TIP = {
-    DRAFT: "Not submitted yet — CW&T can't see this order until you submit it.",
-    SUBMITTED: "We've received your order. Pay the invoice when you're ready and we'll start preparing your shipment.",
-    INVOICE_SENT: "We've emailed your invoice — once it's paid we'll start preparing your shipment.",
+    DRAFT: "Your order is in draft mode. CW&T can't see it until you submit it.",
+    SUBMITTED: "CW&T has received your order. Pay the invoice when you're ready and we'll start preparing your shipment. Items will be reserved for 24 hours.",
+    INVOICE_SENT: "We've emailed your invoice. Once it's paid we'll start preparing your shipment.",
     PREPARING: "Your order is confirmed and we're getting it ready to ship.",
-    PARTIALLY_SHIPPED: "Part of this order is on its way — the rest ships as soon as it's ready.",
+    PARTIALLY_SHIPPED: "Part of this order is on its way. The rest ships as soon as it's ready.",
     SHIPPED: "Your order is on its way.",
-    CANCELLED: "This order was cancelled. If that's unexpected, get in touch.",
+    CANCELLED: "This order was cancelled. If that's unexpected, please get in touch.",
     REFUNDED: "This order was returned and refunded.",
   };
 
@@ -95,6 +95,9 @@
      Orders list table
      ---------------------------------------------------------------------- */
 
+  // True when the customer's draft sheet has items on it (set by renderList).
+  var hasDraftItems = false;
+
   // ACTIONS column: the one thing the customer can do next with this order.
   function actionsHTML(o) {
     if (o.status === "DRAFT") {
@@ -135,6 +138,11 @@
       container.innerHTML = '<p class="wh-ls-empty">No orders yet.</p>';
       return;
     }
+
+    // The server only includes a DRAFT row when the draft sheet has items on
+    // it — its presence is what makes Reorder/Edit destructive (they overwrite
+    // the draft), so it decides whether those actions confirm first.
+    hasDraftItems = orders.some(function (o) { return o.status === "DRAFT"; });
 
     var editCtx = getEditContext();
     var html = '<table class="wh-ls-table wh-orders-table"><thead><tr>';
@@ -263,8 +271,10 @@
      Reorder — copy this order into the active draft, go to the order sheet
      ---------------------------------------------------------------------- */
 
+  // confirmText is null when the draft sheet is empty — nothing would be
+  // lost, so don't interrupt.
   function loadIntoSheet(btn, linesheetUrl, editContext, confirmText) {
-    if (!window.confirm(confirmText)) {
+    if (confirmText && !window.confirm(confirmText)) {
       return;
     }
     var original = btn.textContent;
@@ -304,10 +314,14 @@
   function reorder(btn, linesheetUrl) {
     loadIntoSheet(
       btn, linesheetUrl, null,
-      "Load this order into a new order sheet? This replaces anything currently on your draft sheet."
+      hasDraftItems
+        ? "Your draft sheet already has items on it — loading this order replaces them. Continue?"
+        : null
     );
   }
 
+  // No confirm needed beyond protecting the draft: the sheet shows an
+  // "editing order #X" banner, and submit asks before replacing the order.
   function editOrder(btn, linesheetUrl) {
     loadIntoSheet(
       btn, linesheetUrl,
@@ -315,8 +329,9 @@
         id: btn.getAttribute("data-draft-order-id"),
         name: btn.getAttribute("data-order-name"),
       },
-      "Edit order " + (btn.getAttribute("data-order-name") || "") + " on the sheet? " +
-      "Submitting the sheet will replace this order. Anything currently on your draft sheet is overwritten."
+      hasDraftItems
+        ? "Your draft sheet already has items on it — loading this order replaces them. Continue?"
+        : null
     );
   }
 

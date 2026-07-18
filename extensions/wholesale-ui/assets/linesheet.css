@@ -94,6 +94,7 @@
 
 .wh-ls-btn {
   display: inline-block;
+  text-decoration: none; /* "Make payment" / "Edit draft" are <a> elements */
   padding: 8px 18px;
   font-size: 12px;
   font-weight: 400;
@@ -405,6 +406,21 @@
   table-layout: auto;
 }
 
+/* Main table header only — the nested detail table's header stays plain */
+.wh-orders-table > thead > tr > th {
+  background: #dcdcdc;
+}
+
+/* Buttons on the orders page: white fill, hover unchanged (black) */
+.wh-orders .wh-ls-btn {
+  background: #fff;
+}
+
+.wh-orders .wh-ls-btn:hover {
+  background: #000;
+  color: #fff;
+}
+
 .wh-orders-row {
   cursor: pointer;
 }
@@ -416,6 +432,7 @@
 .wh-orders-detail > td {
   padding: 14px 12px;
   cursor: default;
+  background: #f3f3f3;
 }
 
 .wh-orders-detail-head {
@@ -437,7 +454,12 @@
 .wh-orders-tip {
   text-transform: none;
   letter-spacing: normal;
-  opacity: 0.8;
+  color: blue;
+}
+
+/* Tracking links ride inside the tip — same blue, underline marks the link */
+.wh-orders-tip a {
+  color: inherit;
 }
 
 .wh-orders-detail-table {
@@ -589,4 +611,10 @@
   font-size: 0.85em;
   opacity: 0.7;
   white-space: normal;
+}
+
+/* Non-button action text ("Awaiting invoice" etc.) — blue like the tips */
+.wh-orders-actions .wh-orders-note {
+  color: blue;
+  opacity: 1;
 }
