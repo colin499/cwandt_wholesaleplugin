@@ -409,8 +409,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       const variants = product.variants.nodes.flatMap((v: any) => {
         const variantId = parseInt(v.id.split("/").pop(), 10);
         const retailCents = Math.round(parseFloat(v.price) * 100);
+        const cms = cmsMap.get(String(variantId));
         const state = resolveVariantWholesale({
-          cms: cmsMap.get(String(variantId)),
+          cms,
           variantId,
           hiddenVariantIds: hiddenIds,
           productActive,
@@ -419,12 +420,17 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         });
         if (!state.available) return [];
 
+        // Distributors see BOTH prices: wh_price stays the wholesale price
+        // and dist_price (their effective order price) rides alongside. For
+        // everyone else wh_price is the effective price and dist_price null.
+        const isDistributor = session.customerType === "DISTRIBUTOR";
         return [{
           id: variantId,
           title: v.title,
           sku: v.sku ?? "",
           retail_price: retailCents,
-          wh_price: state.priceCents,
+          wh_price: isDistributor ? cms!.wholesalePriceCents : state.priceCents,
+          dist_price: isDistributor ? state.priceCents : null,
           currency_code: shopCurrency,
           available: v.availableForSale,
           in_stock: v.inventoryQuantity ?? 0,
@@ -506,8 +512,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const variants = productData.variants.nodes.flatMap((v: any) => {
       const retailCents = Math.round(parseFloat(v.price) * 100);
       const variantId = parseInt(v.id.split("/").pop(), 10);
+      const cms = cmsMap.get(String(variantId));
       const state = resolveVariantWholesale({
-        cms: cmsMap.get(String(variantId)),
+        cms,
         variantId,
         hiddenVariantIds: hiddenIds,
         productActive,
@@ -516,13 +523,17 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       });
       if (!state.available) return [];
 
+      // Distributors see BOTH prices (wholesale row + distributor row on the
+      // PDP); their effective price is dist_price. See linesheet-data.
+      const isDistributor = session.customerType === "DISTRIBUTOR";
       return [{
         id: variantId,
         gid: v.id,
         title: v.title,
         sku: v.sku ?? "",
         retail_price: retailCents,
-        wh_price: state.priceCents,
+        wh_price: isDistributor ? cms!.wholesalePriceCents : state.priceCents,
+        dist_price: isDistributor ? state.priceCents : null,
         discount_percent: state.discountPercent,
         available: v.availableForSale,
         in_stock: v.inventoryQuantity ?? 0,
@@ -765,9 +776,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         ? [
             {
               id: activeDraft.id,
-              // No Shopify order exists yet — the STATUS column already says
-              // "Draft", so the ORDER column shows a placeholder.
-              order_name: "—",
+              // No Shopify order number exists yet for the working draft.
+              order_name: "CURRENT DRAFT",
               po_number: activeDraft.poNumber || "",
               submitted_at: activeDraft.updatedAt,
               subtotal_cents: activeDraft.subtotalCents,

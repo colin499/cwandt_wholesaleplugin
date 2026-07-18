@@ -17,7 +17,7 @@
   "use strict";
 
   var SK_STATUS    = "wh_status";
-  var SK_LINESHEET = "wh_linesheet_v4"; // versioned key — bump if response shape changes
+  var SK_LINESHEET = "wh_linesheet_v5"; // versioned key — bump if response shape changes (v5: dist_price)
 
   /* -------------------------------------------------------------------------
      Wholesale status check (mirrors wholesale.js — synchronous)
@@ -97,6 +97,15 @@
      bundleSizes are parsed ints from block settings — safe to interpolate directly
      ---------------------------------------------------------------------- */
 
+  // A distributor's effective unit price is dist_price; wh_price for others.
+  function effectivePrice(variant) {
+    return variant.dist_price != null ? variant.dist_price : variant.wh_price;
+  }
+
+  // True when the current customer sees distributor pricing (server sends
+  // dist_price only to distributor accounts). Set from response data.
+  var hasDistPricing = false;
+
   function buildQtyInputHTML(variant) {
     // Numeric input; 0 = not ordering, otherwise the server enforces MOQ
     // (and we pre-validate client-side). Out-of-stock variants stay
@@ -109,7 +118,7 @@
       ' data-variant-id="' + variant.id + '"' +
       ' data-moq="' + (variant.moq || 1) + '"' +
       ' data-case="' + caseSize + '"' +
-      ' data-price="' + variant.wh_price + '">';
+      ' data-price="' + effectivePrice(variant) + '">';
     if (caseSize) {
       // Soft case-pack encouragement: one click adds a full case.
       html +=
@@ -144,6 +153,14 @@
       '<td class="wh-ls-col-price wh-ls-col-wh">' +
       formatMoney(variant.wh_price, variant.currency_code) +
       "</td>";
+    if (hasDistPricing) {
+      html +=
+        '<td class="wh-ls-col-price wh-ls-col-dist">' +
+        (variant.dist_price != null
+          ? formatMoney(variant.dist_price, variant.currency_code)
+          : "—") +
+        "</td>";
+    }
     html += '<td class="wh-ls-col-moq">' + (variant.moq > 1 ? variant.moq : "1") + "</td>";
     html += stockCell(variant);
     html += '<td class="wh-ls-col-qty wh-no-print">' + buildQtyInputHTML(variant) + "</td>";
@@ -192,6 +209,12 @@
       return '<p class="wh-ls-empty">No products are available in your line sheet.</p>';
     }
 
+    hasDistPricing = data.collections.some(function (c) {
+      return (c.products || []).some(function (p) {
+        return (p.variants || []).some(function (v) { return v.dist_price != null; });
+      });
+    });
+
     var html = "";
 
     data.collections.forEach(function (collection) {
@@ -212,6 +235,7 @@
       html += "<th>SKU</th>";
       html += sortableTh("Retail", "retail", true);
       html += "<th>Wholesale</th>";
+      if (hasDistPricing) html += "<th>Distributor</th>";
       html += '<th class="wh-ls-col-moq">MOQ</th>';
       html += '<th class="wh-ls-col-stock">Stock</th>';
       html += sortableTh("Qty", "qty", true, "wh-ls-col-qty wh-no-print");
@@ -303,9 +327,12 @@
     });
   }
 
-  // Rows for CSV/TSV: [Product, Variant, SKU, Retail, Wholesale, MOQ, Case, Stock, Qty]
+  // Rows for CSV/TSV: [Product, Variant, SKU, Retail, Wholesale, (Distributor,) MOQ, Case, Stock, Qty]
   function buildExportRows(content) {
-    var rows = [["Product", "Variant", "SKU", "Retail", "Wholesale", "MOQ", "Case Size", "Stock", "Qty"]];
+    var header = ["Product", "Variant", "SKU", "Retail", "Wholesale"];
+    if (hasDistPricing) header.push("Distributor");
+    header = header.concat(["MOQ", "Case Size", "Stock", "Qty"]);
+    var rows = [header];
     if (!lastData || !lastData.collections) return rows;
     lastData.collections.forEach(function (collection) {
       (collection.products || []).forEach(function (product) {
@@ -313,17 +340,22 @@
           var qtyInput = content.querySelector(
             '.wh-ls-qty-input[data-variant-id="' + variant.id + '"]'
           );
-          rows.push([
+          var row = [
             product.title,
             variant.title === "Default Title" ? "" : variant.title,
             variant.sku || "",
             (variant.retail_price / 100).toFixed(2),
             (variant.wh_price / 100).toFixed(2),
+          ];
+          if (hasDistPricing) {
+            row.push(variant.dist_price != null ? (variant.dist_price / 100).toFixed(2) : "");
+          }
+          rows.push(row.concat([
             variant.moq > 1 ? variant.moq : 1,
             variant.case_size && variant.case_size > 1 ? variant.case_size : "",
             !variant.available || variant.in_stock <= 0 ? "Backorder" : variant.in_stock,
             qtyInput && qtyInput.value ? qtyInput.value : "",
-          ]);
+          ]));
         });
       });
     });

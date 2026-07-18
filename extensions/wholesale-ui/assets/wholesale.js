@@ -28,7 +28,7 @@
   window.__whWholesaleInit = true;
 
   var SK_STATUS = "wh_status";    // "1" | "0"
-  var SK_PRICES = "wh_prices3_";  // + productId → JSON (v3: adds case_size)
+  var SK_PRICES = "wh_prices4_";  // + productId → JSON (v4: adds dist_price)
 
   /* -------------------------------------------------------------------------
      1. Determine wholesale status
@@ -124,6 +124,8 @@
     var block    = document.getElementById("wh-price-block");
     var skeleton = document.querySelector(".wh-price-skeleton"); // sibling of the block, not a child
     var priceEl  = document.getElementById("wh-price-amount");
+    var distEl   = document.getElementById("wh-price-dist");
+    var distRow  = document.getElementById("wh-row-dist");
     var msrpEl   = document.getElementById("wh-price-msrp");
     var msrpRow  = document.getElementById("wh-row-msrp");
     var moqEl    = document.getElementById("wh-price-moq");
@@ -150,6 +152,7 @@
     if (!variant && !selectedVariantId) variant = variantsData[0];
     if (!variant) {
       if (priceEl) priceEl.textContent = "—";
+      if (distRow) distRow.setAttribute("hidden", "");
       if (msrpRow) msrpRow.setAttribute("hidden", "");
       if (moqRow) moqRow.setAttribute("hidden", "");
       if (caseRow) caseRow.setAttribute("hidden", "");
@@ -161,6 +164,16 @@
     }
 
     if (priceEl) priceEl.textContent = formatMoney(variant.wh_price);
+
+    // Distributor accounts get an extra row with their effective price.
+    if (distEl && distRow) {
+      if (variant.dist_price != null) {
+        distEl.textContent = formatMoney(variant.dist_price);
+        distRow.removeAttribute("hidden");
+      } else {
+        distRow.setAttribute("hidden", "");
+      }
+    }
 
     if (msrpEl && msrpRow) {
       if (variant.retail_price > 0) {

@@ -91,6 +91,10 @@
     <p class="wh-price-row">
       <span class="wh-price-key">WHOLESALE</span><span class="wh-price-val" id="wh-price-amount" aria-live="polite">—</span>
     </p>
+    {%- comment -%} Shown only to distributor accounts (their effective price) {%- endcomment -%}
+    <p class="wh-price-row" id="wh-row-dist" hidden>
+      <span class="wh-price-key">DISTRIBUTOR</span><span class="wh-price-val" id="wh-price-dist"></span>
+    </p>
     <p class="wh-price-row" id="wh-row-moq" hidden>
       <span class="wh-price-key">MOQ</span><span class="wh-price-val" id="wh-price-moq"></span>
     </p>

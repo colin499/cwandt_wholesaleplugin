@@ -108,17 +108,31 @@ export default function Index() {
         <Card>
           <BlockStack gap="300">
             <Text as="h2" variant="headingMd">How this app works</Text>
-            <Text as="p">
-              Enroll customers on the <Link url="/app/customers">Customers</Link> page or by
-              approving an <Link url="/app/applications">application</Link> — enrollment here,
-              not a Shopify tag, is what unlocks wholesale on the storefront. Wholesale prices
-              come from the CMS (cms.cwandt.com → Wholesale); a variant not listed there is not
-              sold wholesale. Customers build their order on the storefront line sheet and
-              submit it from their Orders page; each submitted order arrives in Shopify as a
-              draft order tagged “wholesale” — review it there and send the invoice. Every
-              submitted sheet is listed under{" "}
-              <Link url="/app/linesheets">Order Sheets</Link>.
-            </Text>
+            <BlockStack gap="150">
+              <Text as="h3" variant="headingSm">Customer Enrollment</Text>
+              <Text as="p">
+                Enroll customers on the <Link url="/app/customers">Customers</Link> page or by
+                approving an <Link url="/app/applications">application</Link>. Enrollment
+                happens here. This app does generate tags for customers still, but we should
+                never touch those from our Shopify admin.
+              </Text>
+            </BlockStack>
+            <BlockStack gap="150">
+              <Text as="h3" variant="headingSm">Wholesale Pricing</Text>
+              <Text as="p">
+                Wholesale prices come from the CMS (cms.cwandt.com → Wholesale); a variant not
+                listed there is not sold wholesale.
+              </Text>
+            </BlockStack>
+            <BlockStack gap="150">
+              <Text as="h3" variant="headingSm">Customer interface + Orders</Text>
+              <Text as="p">
+                Customers build their order on the storefront line sheet and submit it from
+                their Orders page. Each submitted order arrives in Shopify as a draft order
+                tagged “wholesale” — review it there and send the invoice. Every submitted
+                sheet is listed under <Link url="/app/linesheets">Order Sheets</Link>.
+              </Text>
+            </BlockStack>
           </BlockStack>
         </Card>
 
