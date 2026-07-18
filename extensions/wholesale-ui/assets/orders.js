@@ -315,7 +315,7 @@
     loadIntoSheet(
       btn, linesheetUrl, null,
       hasDraftItems
-        ? "Your draft sheet already has items on it — loading this order replaces them. Continue?"
+        ? "This will clear your current draft sheet and fill it with this order's items. Continue?"
         : null
     );
   }
@@ -330,7 +330,7 @@
         name: btn.getAttribute("data-order-name"),
       },
       hasDraftItems
-        ? "Your draft sheet already has items on it — loading this order replaces them. Continue?"
+        ? "This will clear your current draft sheet and fill it with this order's items. Continue?"
         : null
     );
   }
