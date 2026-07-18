@@ -315,7 +315,7 @@
     loadIntoSheet(
       btn, linesheetUrl, null,
       hasDraftItems
-        ? "This will clear your current draft sheet and fill it with this order's items. Continue?"
+        ? "You have an unsubmitted Draft (the top row of this list). Reordering discards its items and loads this order's items instead. Continue?"
         : null
     );
   }
@@ -330,7 +330,7 @@
         name: btn.getAttribute("data-order-name"),
       },
       hasDraftItems
-        ? "This will clear your current draft sheet and fill it with this order's items. Continue?"
+        ? "You have an unsubmitted Draft (the top row of this list). Editing this order discards the Draft's items. Continue?"
         : null
     );
   }
