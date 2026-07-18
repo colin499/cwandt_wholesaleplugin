@@ -79,6 +79,11 @@ export default function Index() {
                   "0"
                 )}
               </Text>
+              {stats.pendingApplications > 0 && (
+                <Text as="p">
+                  <Link url="/app/applications">Review →</Link>
+                </Text>
+              )}
             </BlockStack>
           </Card>
           <Card>
@@ -91,9 +96,31 @@ export default function Index() {
                   "0"
                 )}
               </Text>
+              {stats.openBackorders > 0 && (
+                <Text as="p">
+                  <Link url="/app/backorders">View →</Link>
+                </Text>
+              )}
             </BlockStack>
           </Card>
         </InlineGrid>
+
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingMd">How this app works</Text>
+            <Text as="p">
+              Enroll customers on the <Link url="/app/customers">Customers</Link> page or by
+              approving an <Link url="/app/applications">application</Link> — enrollment here,
+              not a Shopify tag, is what unlocks wholesale on the storefront. Wholesale prices
+              come from the CMS (cms.cwandt.com → Wholesale); a variant not listed there is not
+              sold wholesale. Customers build their order on the storefront line sheet and
+              submit it from their Orders page; each submitted order arrives in Shopify as a
+              draft order tagged “wholesale” — review it there and send the invoice. Every
+              submitted sheet is listed under{" "}
+              <Link url="/app/linesheets">Order Sheets</Link>.
+            </Text>
+          </BlockStack>
+        </Card>
 
         <Layout>
           <Layout.Section>
@@ -129,29 +156,6 @@ export default function Index() {
                     )}
                   </BlockStack>
                 )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-
-          <Layout.Section variant="oneThird">
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Quick Links</Text>
-                <Text as="p">
-                  <Link url="/app/applications">Review pending applications →</Link>
-                </Text>
-                <Text as="p">
-                  <Link url="/app/backorders">View open backorders →</Link>
-                </Text>
-                <Text as="p">
-                  <Link url="/app/pricing">Configure pricing rules →</Link>
-                </Text>
-                <Text as="p">
-                  <Link url="/app/cms-sync">CMS sync →</Link>
-                </Text>
-                <Text as="p">
-                  <Link url="/app/settings">Settings →</Link>
-                </Text>
               </BlockStack>
             </Card>
           </Layout.Section>
