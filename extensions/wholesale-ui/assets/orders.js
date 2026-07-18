@@ -222,12 +222,19 @@
         "<td>" + (unit === null ? "—" : formatMoney(unit * l.quantity)) + "</td>" +
         "</tr>";
     });
-    html += "</tbody></table>";
+    // Subtotal rides as a table row so the amount aligns under the line
+    // totals; the pad cell keeps the label from spanning the full width.
+    // (subtotal_cents is the amount AS SUBMITTED — line prices are current
+    // CMS prices, so the column may not sum to it if prices changed.)
+    html += "</tbody><tfoot><tr>";
+    html += '<td colspan="4" class="wh-orders-subtotal-pad"></td>';
+    html += '<td class="wh-orders-subtotal-cell">Subtotal</td>';
+    html += '<td class="wh-orders-subtotal-cell">' + formatMoney(order.subtotal_cents) + "</td>";
+    html += "</tr></tfoot></table>";
 
-    html += '<p class="wh-orders-detail-foot">';
-    html += "TOTAL AS SUBMITTED : " + formatMoney(order.subtotal_cents);
-    if (order.ship_own_label) html += " · Customer provides own shipping label";
-    html += "</p>";
+    if (order.ship_own_label) {
+      html += '<p class="wh-orders-detail-foot">Customer provides own shipping label</p>';
+    }
 
     return html;
   }
