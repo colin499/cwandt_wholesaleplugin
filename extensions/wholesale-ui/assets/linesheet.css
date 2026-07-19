@@ -206,6 +206,18 @@
   border-bottom: 1px solid #000;
 }
 
+/* Line sheet only (#wh-linesheet-content excludes the Orders page tables):
+   shaded header row; row highlight on hover or while its qty input has
+   focus. */
+#wh-linesheet-content .wh-ls-table thead th {
+  background: #dcdcdc;
+}
+
+#wh-linesheet-content .wh-ls-table tbody tr:hover td,
+#wh-linesheet-content .wh-ls-table tbody tr:focus-within td {
+  background: #f3f3f3;
+}
+
 .wh-ls-sortable {
   cursor: pointer;
   user-select: none;
@@ -466,7 +478,6 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 10px;
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -656,10 +667,12 @@
   white-space: normal;
 }
 
-/* Non-button action text ("Awaiting invoice" etc.) — blue like the tips */
+/* Non-button action text ("Awaiting invoice" etc.) */
 .wh-orders-actions .wh-orders-note {
-  color: blue;
+  color: black;
   opacity: 1;
+  text-transform: uppercase;
+  font-style: italic;
 }
 
 /* Secondary EDIT action sits after the primary action/note */

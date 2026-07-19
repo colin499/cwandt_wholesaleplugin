@@ -994,6 +994,22 @@
         printBtn.addEventListener("click", function () { window.print(); });
       }
 
+      // Clear Sheet: zero every quantity (PO and shipping choice stay) and
+      // save, so the emptied sheet is what persists.
+      var clearBtn = document.getElementById("wh-ls-clear");
+      if (clearBtn) {
+        clearBtn.addEventListener("click", function () {
+          if (!window.confirm("Clear all quantities from the sheet?")) return;
+          content.querySelectorAll(".wh-ls-qty-input").forEach(function (input) {
+            input.value = "";
+            input.classList.remove("wh-ls-qty--below-moq");
+          });
+          if (submitBtn) submitBtn.__whCaseNudged = false;
+          updateSummary(content, summaryEl);
+          saveDraftNow(content);
+        });
+      }
+
       if (exportBtn && exportMenu) {
         exportBtn.addEventListener("click", function (e) {
           e.stopPropagation();
