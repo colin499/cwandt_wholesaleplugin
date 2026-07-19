@@ -46,6 +46,10 @@
       <a href="{{ block.settings.linesheet_url | default: '/pages/linesheet' }}">Order Sheet</a>
       <span class="wh-header-nav-sep" aria-hidden="true">|</span>
       <a href="{{ block.settings.orders_url | default: '/pages/orders' }}">Order History</a>
+      {% comment %} Trailing separator only when the cart button is visible {% endcomment %}
+      {% if cart.item_count > 0 %}
+        <span class="wh-header-nav-sep" aria-hidden="true">|</span>
+      {% endif %}
     </nav>
   </template>
 {% else %}

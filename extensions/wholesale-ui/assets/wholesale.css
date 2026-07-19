@@ -179,7 +179,8 @@
 .wh-header-nav {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  margin-right: 12px; /* breathing room before the cart button when visible */
 }
 
 .wh-header-nav a {

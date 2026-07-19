@@ -18,13 +18,14 @@
   overflow-x: auto;
 }
 
+/* Stacked: title block on top, customer panel below at the LEFT margin
+   (Taylor's 2026-07-19 layout — panel no longer floats top-right). */
 .wh-ls-header {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 16px;
   margin-bottom: 24px;
-  flex-wrap: wrap;
 }
 
 .wh-ls-title {
@@ -49,7 +50,7 @@
   gap: 10px;
   flex-shrink: 0;
   align-items: center;
-  margin-left: auto;
+  order: -1; /* buttons lead the bar (left-aligned); save-state + summary follow */
 }
 
 /* --------------------------------------------------------------------------
