@@ -49,16 +49,11 @@
     return STATUS_TIP[order.status] || "";
   }
 
-  // Edit context (set by "Edit order") rides in sessionStorage; the linesheet
-  // banner and the submit here both read it.
+  // Edit context rides in sessionStorage: the linesheet reads it to load the
+  // EDITING session and submit an in-place order update.
   var EDIT_KEY = "wh-edit-order";
-  function getEditContext() {
-    try {
-      var ctx = JSON.parse(sessionStorage.getItem(EDIT_KEY) || "null");
-      return ctx && ctx.id ? ctx : null;
-    } catch (e) {
-      return null;
-    }
+  function setEditContext(ctx) {
+    try { sessionStorage.setItem(EDIT_KEY, JSON.stringify(ctx)); } catch (e) { /* ignore */ }
   }
   function clearEditContext() {
     try { sessionStorage.removeItem(EDIT_KEY); } catch (e) { /* ignore */ }
@@ -98,6 +93,10 @@
   // Linesheet page URL (set in init from the block's data attribute).
   var sheetUrl = "/pages/linesheet";
 
+  // True when the working draft has items (set by renderList) — Reorder
+  // replaces the draft, so it confirms first when that would lose anything.
+  var hasDraftItems = false;
+
   // ACTIONS column: primary action (or note) first, then EDIT while the
   // order is still editable. Editing ends the moment the draft becomes a
   // real Shopify order (payment, or net-terms auto-queue) — from PREPARING
@@ -132,7 +131,7 @@
           ' data-order-id="' + esc(o.id) + '"' +
           ' data-draft-order-id="' + esc(o.draft_order_id) + '"' +
           ' data-order-name="' + esc(o.order_name) + '"' +
-          ' title="Reopen this order on the sheet — reviewing and submitting replaces it">Edit</button>';
+          ' title="Open this order on the sheet and update it in place">Edit</button>';
       }
       return html;
     }
@@ -152,16 +151,14 @@
       return;
     }
 
-    var editCtx = getEditContext();
+    hasDraftItems = orders.some(function (o) { return o.status === "DRAFT"; });
+
     var html = '<table class="wh-ls-table wh-orders-table"><thead><tr>';
     html += "<th>Order</th><th>Date</th><th>PO #</th><th>Items</th><th>Total</th><th>Status</th><th>Actions</th>";
     html += "</tr></thead><tbody>";
 
     orders.forEach(function (o) {
       var name = esc(o.order_name);
-      if (o.status === "DRAFT" && editCtx) {
-        name += ' <span class="wh-orders-note">(replaces ' + esc(editCtx.name || "") + ")</span>";
-      }
       html +=
         '<tr class="wh-orders-row" data-order-id="' + esc(o.id) + '" data-status="' + esc(o.status) + '" tabindex="0">' +
         "<td>" + name + "</td>" +
@@ -271,13 +268,18 @@
   }
 
   /* -------------------------------------------------------------------------
-     Reorder — copy this order into the active draft, go to the order sheet
+     Reorder — copy this order into the active draft, go to the order sheet.
+     Edit — start an EDITING session (the draft is never touched) and go to
+     the sheet, which submits an in-place update of the existing order.
      ---------------------------------------------------------------------- */
 
-  // No confirm needed: a non-empty draft is PARKED server-side (not lost)
-  // and restored automatically when the edit/reorder is submitted or the
-  // edit is cancelled.
-  function loadIntoSheet(btn, linesheetUrl, editContext) {
+  function reorder(btn, linesheetUrl) {
+    if (
+      hasDraftItems &&
+      !window.confirm("Start a new order from this one? Anything on your draft sheet will be replaced.")
+    ) {
+      return;
+    }
     var original = btn.textContent;
     btn.disabled = true;
     btn.textContent = "Loading…";
@@ -291,38 +293,43 @@
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.json();
       })
-      .then(function (data) {
-        // Edit mode rides in sessionStorage: the sheet shows an "editing" banner
-        // and submit sends replaces_draft_order_id. Plain reorder clears any
-        // stale edit context so a fresh order can never replace an old one.
-        // `parked` tells the banner a set-aside draft will be restored.
-        try {
-          if (editContext) {
-            editContext.parked = !!(data && data.parked);
-            sessionStorage.setItem("wh-edit-order", JSON.stringify(editContext));
-          } else {
-            sessionStorage.removeItem("wh-edit-order");
-          }
-        } catch (e) { /* sessionStorage unavailable — edit degrades to reorder */ }
+      .then(function () {
+        clearEditContext(); // a reorder is a fresh order, never an edit
         window.location.href = linesheetUrl;
       })
       .catch(function (err) {
         btn.disabled = false;
         btn.textContent = original;
-        console.error("[orders] load-into-sheet error:", err);
+        console.error("[orders] reorder error:", err);
         alert("Could not load this order into the sheet. Please try again.");
       });
   }
 
-  function reorder(btn, linesheetUrl) {
-    loadIntoSheet(btn, linesheetUrl, null);
-  }
-
   function editOrder(btn, linesheetUrl) {
-    loadIntoSheet(btn, linesheetUrl, {
-      id: btn.getAttribute("data-draft-order-id"),
-      name: btn.getAttribute("data-order-name"),
-    });
+    var original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Loading…";
+    fetch("/apps/wholesale/linesheet-edit-begin", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ draft_id: btn.getAttribute("data-order-id") }),
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        if (!data || !data.ok) throw new Error("Bad response");
+        setEditContext({ id: data.draft_order_id, name: data.order_name });
+        window.location.href = linesheetUrl;
+      })
+      .catch(function (err) {
+        btn.disabled = false;
+        btn.textContent = original;
+        console.error("[orders] edit-begin error:", err);
+        alert("Could not open this order for editing. Please try again.");
+      });
   }
 
   /* -------------------------------------------------------------------------
@@ -354,9 +361,6 @@
         msg += " This order includes freight-priced items — we'll email your invoice once shipping is quoted.";
       }
     }
-    if (data.replaced_order_name) {
-      msg += " It replaces order " + data.replaced_order_name + ".";
-    }
     return msg;
   }
 
@@ -378,19 +382,12 @@
   }
 
   function submitDraft(btn, resultEl, reloadList) {
-    var editCtx = getEditContext();
-    if (editCtx) {
-      if (!window.confirm("Submit this order? It will replace order " + (editCtx.name || "") + ".")) {
-        return;
-      }
-    }
     var original = btn.textContent;
     btn.disabled = true;
     btn.textContent = "Submitting…";
     if (resultEl) resultEl.hidden = true;
 
     var body = { draft_id: btn.getAttribute("data-order-id") };
-    if (editCtx) body.replaces_draft_order_id = editCtx.id;
 
     fetch("/apps/wholesale/linesheet-order", {
       method: "POST",
@@ -414,14 +411,10 @@
       })
       .then(function (data) {
         if (!data || !data.ok) throw new Error((data && data.error) || "Order failed");
-        clearEditContext();
         showResult(resultEl, true, buildSubmitMessage(data), data.invoice_url);
         reloadList();
       })
       .catch(function (err) {
-        // The order being edited no longer exists / was already paid — drop
-        // edit mode so the next submit cleanly creates a new order.
-        if (err && err.editExpired) clearEditContext();
         showResult(
           resultEl, false,
           err && err.userFacing ? err.message : "Could not submit order. Please try again or contact us."

@@ -563,7 +563,26 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const session = await getWholesaleSession(shopifyCustomerId);
     if (!session) return json({ wholesale: false }, { status: 403 });
 
-    const draft = await getActiveDraft(session.shopifyCustomerId);
+    // ?edit_of=<draftOrderId>: the sheet is editing an existing unpaid order —
+    // serve the EDITING session row instead of the working draft (which is
+    // never touched by an edit). edit_missing tells the client the session
+    // is gone (expired/cancelled elsewhere) so it can fall back cleanly.
+    const editOf = (url.searchParams.get("edit_of") || "").replace(/\D/g, "");
+    let draft;
+    let editMissing = false;
+    if (editOf) {
+      draft = await db.linesheetDraft.findFirst({
+        where: {
+          shopifyCustomerId: session.shopifyCustomerId,
+          status: "EDITING",
+          shopifyDraftOrderId: editOf,
+        },
+        orderBy: { updatedAt: "desc" },
+      });
+      if (!draft) editMissing = true;
+    } else {
+      draft = await getActiveDraft(session.shopifyCustomerId);
+    }
     const history = await db.linesheetDraft.findMany({
       where: { shopifyCustomerId: session.shopifyCustomerId, status: "SUBMITTED" },
       orderBy: { updatedAt: "desc" },
@@ -609,6 +628,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
     return proxyJson({
       wholesale: true,
+      edit_missing: editMissing,
       customer: {
         name:
           [customerRow?.firstName, customerRow?.lastName].filter(Boolean).join(" ") ||
@@ -855,12 +875,96 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const poNumber = String(payload?.po_number ?? "").slice(0, 120);
     const shipOwnLabel = payload?.ship_own_label === true;
 
+    // edit_of: autosave targets the EDITING session, never the working draft.
+    const editOf = String(payload?.edit_of ?? "").replace(/\D/g, "");
+    if (editOf) {
+      const editRow = await db.linesheetDraft.findFirst({
+        where: {
+          shopifyCustomerId: session.shopifyCustomerId,
+          status: "EDITING",
+          shopifyDraftOrderId: editOf,
+        },
+        orderBy: { updatedAt: "desc" },
+      });
+      if (!editRow) {
+        return json({ error: "Edit session expired", edit_expired: true }, { status: 404 });
+      }
+      await db.linesheetDraft.update({
+        where: { id: editRow.id },
+        data: {
+          lines: JSON.stringify(lines),
+          subtotalCents,
+          poNumber: poNumber || null,
+          shipOwnLabel,
+        },
+      });
+      return proxyJson({ ok: true, line_count: lines.length });
+    }
+
     const saved = await upsertActiveDraft(session.shopifyCustomerId, lines, subtotalCents);
     await db.linesheetDraft.update({
       where: { id: saved.id },
       data: { poNumber: poNumber || null, shipOwnLabel },
     });
     return proxyJson({ ok: true, line_count: lines.length });
+  }
+
+  // ── /apps/wholesale/linesheet-edit-begin (POST) ─────────────────────────
+  // Start editing an unpaid order: snapshot its SUBMITTED sheet into an
+  // EDITING session row (one per customer, newest wins). The working draft
+  // is not involved at any point.
+  if (subpath === "linesheet-edit-begin") {
+    const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");
+    const session = await getWholesaleSession(shopifyCustomerId);
+    if (!session) return json({ wholesale: false }, { status: 403 });
+
+    let payload: any;
+    try {
+      payload = await request.json();
+    } catch {
+      return json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const source = await db.linesheetDraft.findFirst({
+      where: {
+        id: String(payload?.draft_id ?? ""),
+        shopifyCustomerId: session.shopifyCustomerId,
+        status: "SUBMITTED",
+      },
+    });
+    if (!source || !source.shopifyDraftOrderId) {
+      return json({ error: "Order not found" }, { status: 404 });
+    }
+    await db.linesheetDraft.deleteMany({
+      where: { shopifyCustomerId: session.shopifyCustomerId, status: "EDITING" },
+    });
+    await db.linesheetDraft.create({
+      data: {
+        shopifyCustomerId: session.shopifyCustomerId,
+        status: "EDITING",
+        lines: source.lines,
+        subtotalCents: source.subtotalCents,
+        poNumber: source.poNumber,
+        shipOwnLabel: source.shipOwnLabel,
+        shopifyDraftOrderId: source.shopifyDraftOrderId,
+      },
+    });
+    return proxyJson({
+      ok: true,
+      draft_order_id: source.shopifyDraftOrderId,
+      order_name: source.orderName || "",
+    });
+  }
+
+  // ── /apps/wholesale/linesheet-edit-cancel (POST) ────────────────────────
+  // Discard the edit session. The order and the working draft are untouched.
+  if (subpath === "linesheet-edit-cancel") {
+    const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");
+    const session = await getWholesaleSession(shopifyCustomerId);
+    if (!session) return json({ wholesale: false }, { status: 403 });
+    await db.linesheetDraft.deleteMany({
+      where: { shopifyCustomerId: session.shopifyCustomerId, status: "EDITING" },
+    });
+    return proxyJson({ ok: true });
   }
 
   // ── /apps/wholesale/linesheet-duplicate (POST) ──────────────────────────
@@ -887,42 +991,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     if (!source) return json({ error: "Order sheet not found" }, { status: 404 });
 
     const lines = parseDraftLines(source.lines);
-    // PARK a non-empty working draft instead of overwriting it — editing or
-    // reordering a previous order must not destroy the customer's draft. The
-    // parked draft is restored automatically when the sheet is next
-    // submitted (any submit frees the sheet) or when an edit is cancelled
-    // (/linesheet-unpark). Only the newest parked draft is kept.
-    const active = await getActiveDraft(session.shopifyCustomerId);
-    let parked = false;
-    if (active && parseDraftLines(active.lines).length > 0) {
-      await db.linesheetDraft.deleteMany({
-        where: { shopifyCustomerId: session.shopifyCustomerId, status: "PARKED" },
-      });
-      await db.linesheetDraft.update({ where: { id: active.id }, data: { status: "PARKED" } });
-      parked = true;
-    }
+    // Reorder replaces the working draft with this order's items (edits use
+    // /linesheet-edit-begin and never touch the draft).
     await upsertActiveDraft(session.shopifyCustomerId, lines, source.subtotalCents);
-    return proxyJson({ ok: true, lines, parked });
-  }
-
-  // ── /apps/wholesale/linesheet-unpark (POST) ─────────────────────────────
-  // Cancel-edit: discard the edit copy on the sheet and bring back the
-  // parked working draft (if any). No body.
-  if (subpath === "linesheet-unpark") {
-    const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");
-    const session = await getWholesaleSession(shopifyCustomerId);
-    if (!session) return json({ wholesale: false }, { status: 403 });
-
-    const parkedDraft = await db.linesheetDraft.findFirst({
-      where: { shopifyCustomerId: session.shopifyCustomerId, status: "PARKED" },
-      orderBy: { updatedAt: "desc" },
-    });
-    if (!parkedDraft) return proxyJson({ ok: true, restored: false });
-
-    const active = await getActiveDraft(session.shopifyCustomerId);
-    if (active) await db.linesheetDraft.delete({ where: { id: active.id } });
-    await db.linesheetDraft.update({ where: { id: parkedDraft.id }, data: { status: "DRAFT" } });
-    return proxyJson({ ok: true, restored: true });
+    return proxyJson({ ok: true, lines });
   }
 
   if (subpath !== "backorder") {
@@ -1112,6 +1184,9 @@ async function handleLinesheetOrder(request: Request, url: URL) {
 
   // Submission comes from the Orders page review: { draft_id } points at the
   // customer's active DRAFT sheet and the server reads lines/PO/label from it.
+  // { edit_of: draftOrderId } instead submits the EDITING session as an
+  // in-place update of that existing unpaid order (draftOrderUpdate — same
+  // order number, same invoice URL; the working draft is never involved).
   // A body with explicit `lines` is still honored (legacy path).
   let rawLines: Array<{ variant_id: unknown; quantity: unknown }> = Array.isArray(payload?.lines)
     ? payload.lines
@@ -1119,7 +1194,27 @@ async function handleLinesheetOrder(request: Request, url: URL) {
   let poNumber = String(payload?.po_number ?? "").slice(0, 120).trim();
   let shipOwnLabel = payload?.ship_own_label === true;
 
-  if (payload?.draft_id && rawLines.length === 0) {
+  const editOfDraftOrderId = String(payload?.edit_of ?? "").replace(/\D/g, "");
+
+  if (editOfDraftOrderId && rawLines.length === 0) {
+    const editSheet = await db.linesheetDraft.findFirst({
+      where: {
+        shopifyCustomerId: wholesaleSession.shopifyCustomerId,
+        status: "EDITING",
+        shopifyDraftOrderId: editOfDraftOrderId,
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (!editSheet) {
+      return json(
+        { error: "This edit session has expired — reopen the order from Order History.", edit_expired: true },
+        { status: 404 }
+      );
+    }
+    rawLines = parseDraftLines(editSheet.lines) as Array<{ variant_id: unknown; quantity: unknown }>;
+    poNumber = (editSheet.poNumber ?? "").slice(0, 120).trim();
+    shipOwnLabel = editSheet.shipOwnLabel;
+  } else if (payload?.draft_id && rawLines.length === 0) {
     const draftSheet = await db.linesheetDraft.findFirst({
       where: {
         id: String(payload.draft_id),
@@ -1142,8 +1237,6 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     }))
     .filter((l) => l.variantId && Number.isFinite(l.quantity) && l.quantity > 0);
 
-  const replacesDraftOrderId = String(payload?.replaces_draft_order_id ?? "").replace(/\D/g, "");
-
   if (lines.length === 0) {
     return json({ error: "No items selected." }, { status: 422 });
   }
@@ -1153,27 +1246,26 @@ async function handleLinesheetOrder(request: Request, url: URL) {
 
   const { admin } = await unauthenticated.admin(shop);
 
-  // Editing an unpaid order: validate the target BEFORE creating anything.
-  // The old draft order is deleted only after the replacement exists, so a
-  // failure at any point leaves the original order intact.
-  let replaceTarget: { rowId: string; gid: string; name: string } | null = null;
-  if (replacesDraftOrderId) {
+  // Editing an unpaid order: validate the target BEFORE touching anything.
+  // A failure at any point leaves the original order intact.
+  let editTarget: { rowId: string; gid: string; name: string } | null = null;
+  if (editOfDraftOrderId) {
     const row = await db.wholesaleOrder.findFirst({
       where: {
-        shopifyDraftOrderId: replacesDraftOrderId,
+        shopifyDraftOrderId: editOfDraftOrderId,
         shopifyCustomerId: wholesaleSession.shopifyCustomerId,
       },
     });
     if (!row) {
       return json(
-        { error: "The order you were editing can't be found. Submitting again will create a new order.", edit_expired: true },
+        { error: "The order you were editing can't be found.", edit_expired: true },
         { status: 422 }
       );
     }
-    const gid = `gid://shopify/DraftOrder/${replacesDraftOrderId}`;
+    const gid = `gid://shopify/DraftOrder/${editOfDraftOrderId}`;
     try {
       const res = await admin.graphql(
-        `query ReplaceTargetStatus($id: ID!) { draftOrder(id: $id) { id name status } }`,
+        `query EditTargetStatus($id: ID!) { draftOrder(id: $id) { id name status } }`,
         { variables: { id: gid } }
       );
       const body = await res.json();
@@ -1181,15 +1273,15 @@ async function handleLinesheetOrder(request: Request, url: URL) {
       if (!target || target.status === "COMPLETED") {
         return json(
           {
-            error: `Order ${target?.name ?? row.orderName} has already been processed and can no longer be edited. Submitting again will create a new order.`,
+            error: `Order ${target?.name ?? row.orderName} has already been paid or processed and can no longer be edited.`,
             edit_expired: true,
           },
           { status: 422 }
         );
       }
-      replaceTarget = { rowId: row.id, gid, name: target.name };
+      editTarget = { rowId: row.id, gid, name: target.name };
     } catch (err) {
-      console.error("[app-proxy/linesheet-order] replace-target lookup failed:", err);
+      console.error("[app-proxy/linesheet-order] edit-target lookup failed:", err);
       return json({ error: "Could not verify the order being edited — please try again." }, { status: 502 });
     }
   }
@@ -1275,6 +1367,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     const isBackorder = !node.availableForSale || (node.inventoryQuantity ?? 0) <= 0;
     lineItems.push({
       isBackorder,
+      label,
       noFreeShipping: productHasNoFreeShippingTag(node.product),
       amountCents: state.priceCents * line.quantity,
       input: {
@@ -1357,6 +1450,133 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     if (shipOwnLabel) return OWN_LABEL_SHIPPING_LINE;
     if (items.some((l) => l.noFreeShipping)) return null;
     return customerIsUS ? FREE_SHIPPING_LINE : null;
+  }
+
+  // ── In-place edit of an existing unpaid order ──────────────────────────────
+  // draftOrderUpdate replaces the line set on the SAME draft order: same
+  // order number, same invoice URL — nothing is duplicated or deleted.
+  if (editTarget) {
+    // Out-of-stock lines can't ride in a payable invoice (Shopify strips
+    // deny-policy OOS lines at payment) and an edit has no backorder split.
+    const oos = lineItems.filter((l) => l.isBackorder);
+    if (oos.length > 0) {
+      return json(
+        {
+          error:
+            "Out-of-stock items can't be added to an existing order: " +
+            oos.map((l) => l.label).join(", ") +
+            ". Remove them here and order them on a new sheet — they'll ship as a backorder.",
+        },
+        { status: 422 }
+      );
+    }
+
+    // Mirrors createDraft's input for a payable stock order.
+    const needsFreightQuote = !shipOwnLabel && lineItems.some((l) => l.noFreeShipping);
+    const tags = [
+      "wholesale",
+      "linesheet",
+      ...(termsTag ? [termsTag] : []),
+      ...(shipOwnLabel ? ["customer-shipping-label"] : []),
+      ...(needsFreightQuote ? ["freight-quote"] : []),
+    ];
+    const shippingLine = shippingLineFor(lineItems);
+    const input = {
+      lineItems: lineItems.map((l) => l.input),
+      ...(shippingLine ? { shippingLine } : {}),
+      reserveInventoryUntil: new Date(
+        Date.now() + INVOICE_INVENTORY_RESERVE_HOURS * 60 * 60 * 1000
+      ).toISOString(),
+      tags,
+      note: [
+        `Wholesale line sheet order${termsTag ? ` — payment terms ${termsTag.toUpperCase()}` : ""}.`,
+        `Edited by customer ${new Date().toISOString().slice(0, 10)}.`,
+        needsFreightQuote
+          ? "Contains freight-priced items — set the shipping cost on this draft before sending the invoice."
+          : null,
+        ...noteLines,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      ...(poNumber ? { poNumber } : {}),
+    };
+
+    let updated: any = null;
+    try {
+      const res = await admin.graphql(
+        `#graphql
+        mutation linesheetDraftOrderUpdate($id: ID!, $input: DraftOrderInput!) {
+          draftOrderUpdate(id: $id, input: $input) {
+            draftOrder { id name invoiceUrl }
+            userErrors { field message }
+          }
+        }`,
+        { variables: { id: editTarget.gid, input } }
+      );
+      const body = await res.json();
+      const errors = body.data?.draftOrderUpdate?.userErrors ?? [];
+      if (errors.length > 0) {
+        console.error("[app-proxy/linesheet-order] draftOrderUpdate userErrors:", errors);
+        const completed = errors.some((e: any) => /complet|paid/i.test(e.message ?? ""));
+        return json(
+          completed
+            ? {
+                error: `Order ${editTarget.name} has already been paid and can no longer be edited.`,
+                edit_expired: true,
+              }
+            : { error: "Could not update the order — please try again." },
+          { status: completed ? 422 : 502 }
+        );
+      }
+      updated = body.data?.draftOrderUpdate?.draftOrder ?? null;
+    } catch (err) {
+      console.error("[app-proxy/linesheet-order] draftOrderUpdate failed:", err);
+    }
+    if (!updated) {
+      return json({ error: "Could not update the order — please try again." }, { status: 502 });
+    }
+
+    // Sync our records to the new contents; the edit session is finished.
+    await db.wholesaleOrder.update({
+      where: { id: editTarget.rowId },
+      data: {
+        totalAmount: subtotalCents,
+        discountPercent:
+          retailSubtotalCents > 0
+            ? Math.round((1 - subtotalCents / retailSubtotalCents) * 100)
+            : 0,
+        orderTags: JSON.stringify(tags),
+      },
+    });
+    await db.linesheetDraft.updateMany({
+      where: {
+        shopifyCustomerId: wholesaleSession.shopifyCustomerId,
+        status: "SUBMITTED",
+        shopifyDraftOrderId: editOfDraftOrderId,
+      },
+      data: {
+        lines: JSON.stringify(
+          lines.map((l) => ({ variant_id: Number(l.variantId), quantity: l.quantity }))
+        ),
+        subtotalCents,
+        poNumber: poNumber || null,
+        shipOwnLabel,
+      },
+    });
+    await db.linesheetDraft.deleteMany({
+      where: { shopifyCustomerId: wholesaleSession.shopifyCustomerId, status: "EDITING" },
+    });
+
+    return proxyJson({
+      ok: true,
+      edited: true,
+      order_name: updated.name,
+      invoice_url: needsFreightQuote ? null : updated.invoiceUrl ?? null,
+      freight_quote: needsFreightQuote,
+      subtotal_cents: subtotalCents,
+      item_count: lineItems.length,
+      payment_terms: wholesaleSession.paymentTerms,
+    });
   }
 
   async function createDraft(items: typeof lineItems, isBackorderOrder: boolean) {
@@ -1511,46 +1731,6 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     }
   }
 
-  // Editing: the replacement now exists, so retire the original — delete its
-  // Shopify draft and mark our rows REPLACED (drops it from order history).
-  // Best-effort: if the delete fails the old order lingers for staff cleanup,
-  // but the customer's new order already stands.
-  let replacedOrderName: string | null = null;
-  if (replaceTarget) {
-    try {
-      const res = await admin.graphql(
-        `#graphql
-        mutation ReplaceOldDraft($input: DraftOrderDeleteInput!) {
-          draftOrderDelete(input: $input) {
-            deletedId
-            userErrors { field message }
-          }
-        }`,
-        { variables: { input: { id: replaceTarget.gid } } }
-      );
-      const body = await res.json();
-      const errors = body.data?.draftOrderDelete?.userErrors ?? [];
-      if (errors.length > 0) {
-        console.error("[app-proxy/linesheet-order] replaced-draft delete userErrors:", errors);
-      }
-    } catch (err) {
-      console.error("[app-proxy/linesheet-order] replaced-draft delete failed:", err);
-    }
-    await db.wholesaleOrder.update({
-      where: { id: replaceTarget.rowId },
-      data: { status: "REPLACED" },
-    });
-    await db.linesheetDraft.updateMany({
-      where: {
-        shopifyCustomerId: wholesaleSession.shopifyCustomerId,
-        shopifyDraftOrderId: replacesDraftOrderId,
-        status: "SUBMITTED",
-      },
-      data: { status: "REPLACED" },
-    });
-    replacedOrderName = replaceTarget.name;
-  }
-
   // Primary order for history/response: the payable one, else the backorder.
   const draftOrder = stockOrder ?? backorderOrder;
 
@@ -1577,15 +1757,6 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     });
   }
 
-  // The sheet is free again — restore a draft parked when this edit/reorder
-  // began (see /linesheet-duplicate) as the working draft.
-  const parkedDraft = await db.linesheetDraft.findFirst({
-    where: { shopifyCustomerId: wholesaleSession.shopifyCustomerId, status: "PARKED" },
-    orderBy: { updatedAt: "desc" },
-  });
-  if (parkedDraft) {
-    await db.linesheetDraft.update({ where: { id: parkedDraft.id }, data: { status: "DRAFT" } });
-  }
 
   const stockFreight = !shipOwnLabel && stockItems.some((l) => l.noFreeShipping);
   return proxyJson({
@@ -1598,7 +1769,6 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     // retail rate table price the freight).
     invoice_url: stockOrder && !queuedOrder && !stockFreight ? stockOrder.invoiceUrl : null,
     freight_quote: stockFreight,
-    replaced_order_name: replacedOrderName,
     order_queued: !!queuedOrder,
     subtotal_cents: subtotalCents,
     item_count: lineItems.length,

@@ -528,7 +528,7 @@
     var lines = getOrderLines(content);
     var subtotal = 0;
     lines.forEach(function (l) { subtotal += l.price * l.quantity; });
-    return {
+    var payload = {
       lines: lines.map(function (l) {
         return { variant_id: l.variant_id, quantity: l.quantity };
       }),
@@ -536,6 +536,10 @@
       po_number: getPoNumber(),
       ship_own_label: getShipOwnLabel(),
     };
+    // In edit mode every save targets the EDITING session, never the draft.
+    var ctx = getEditContext();
+    if (ctx) payload.edit_of = ctx.id;
+    return payload;
   }
 
   function saveDraftNow(content) {
@@ -572,12 +576,23 @@
   }
 
   function loadDraft(content, summaryEl, prefill) {
-    fetch("/apps/wholesale/linesheet-draft", { credentials: "same-origin" })
+    var ctx = getEditContext();
+    var url =
+      "/apps/wholesale/linesheet-draft" +
+      (ctx ? "?edit_of=" + encodeURIComponent(ctx.id) : "");
+    fetch(url, { credentials: "same-origin" })
       .then(function (r) {
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.json();
       })
       .then(function (data) {
+        // The edit session is gone (cancelled elsewhere / expired) — drop
+        // edit mode and load the normal working draft instead.
+        if (ctx && data.edit_missing) {
+          clearEditContext();
+          loadDraft(content, summaryEl, prefill);
+          return;
+        }
         if (data.customer) {
           setText("wh-ls-cust-name", data.customer.name || "—");
           setText("wh-ls-cust-company", data.customer.company || "—");
@@ -594,7 +609,9 @@
           var ownEl = document.getElementById("wh-ls-own-label");
           if (ownEl) ownEl.checked = !!data.draft.ship_own_label;
           updateSummary(content, summaryEl);
-          if (data.draft.lines && data.draft.lines.length > 0) setSaveState("Draft restored");
+          if (data.draft.lines && data.draft.lines.length > 0) {
+            setSaveState(ctx ? "Editing " + (ctx.name || "order") : "Draft restored");
+          }
         }
       })
       .catch(function (err) {
@@ -634,19 +651,18 @@
     banner.id = "wh-ls-edit-banner";
     banner.className = "wh-ls-order-result wh-ls-order-result--success";
     banner.appendChild(document.createTextNode(
-      "Editing order " + (ctx.name || "") + " — review and submit to replace it. " +
-      (ctx.parked ? "Your saved draft was set aside and will be restored afterward. " : "")
+      "Editing order " + (ctx.name || "") + " — submitting updates that order in place. " +
+      "Your draft sheet is untouched. "
     ));
     var cancel = document.createElement("a");
     cancel.href = "#";
-    cancel.textContent = "Cancel edit (keep original order)";
+    cancel.textContent = "Cancel edit (keep order as is)";
     cancel.addEventListener("click", function (e) {
       e.preventDefault();
       clearEditContext();
-      // Restore the parked draft (if any) as the working sheet, then reload
-      // so the sheet prefills from it. Reload happens regardless — cancelling
-      // must always leave a coherent sheet.
-      fetch("/apps/wholesale/linesheet-unpark", {
+      // Drop the edit session server-side, then reload — the sheet comes
+      // back showing the untouched working draft either way.
+      fetch("/apps/wholesale/linesheet-edit-cancel", {
         method: "POST",
         credentials: "same-origin",
       }).then(
@@ -711,6 +727,14 @@
     }
     reviewBtn.__whCaseNudged = false;
 
+    // Edit mode submits directly from the sheet: save the edit session, then
+    // update the existing order in place (same order #, same invoice).
+    var editCtx = getEditContext();
+    if (editCtx) {
+      submitEditedOrder(content, reviewBtn, resultEl, editCtx);
+      return;
+    }
+
     var original = reviewBtn.textContent;
     reviewBtn.disabled = true;
     reviewBtn.textContent = "Saving…";
@@ -736,6 +760,64 @@
         );
         reviewBtn.disabled = false;
         reviewBtn.textContent = original;
+      });
+  }
+
+  function submitEditedOrder(content, btn, resultEl, ctx) {
+    var original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Updating order…";
+    if (resultEl) resultEl.hidden = true;
+    if (saveTimer) clearTimeout(saveTimer);
+
+    var ordersUrl = btn.getAttribute("data-orders-url") || "/pages/orders";
+    // Force-save the edit session, then submit it as an in-place update.
+    fetch("/apps/wholesale/linesheet-draft", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(collectDraftPayload(content)),
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return fetch("/apps/wholesale/linesheet-order", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ edit_of: ctx.id }),
+        });
+      })
+      .then(function (r) {
+        return r
+          .json()
+          .catch(function () { throw new Error("HTTP " + r.status); })
+          .then(function (data) {
+            if (!r.ok || !data.ok) {
+              var e = new Error((data && data.error) || "HTTP " + r.status);
+              e.userFacing = !!(data && data.error);
+              e.editExpired = !!(data && data.edit_expired);
+              throw e;
+            }
+            return data;
+          });
+      })
+      .then(function () {
+        clearEditContext();
+        // Land on Order History — the updated order (and unchanged draft)
+        // are both visible there.
+        window.location.href = ordersUrl;
+      })
+      .catch(function (err) {
+        if (err && err.editExpired) clearEditContext();
+        showOrderResult(
+          resultEl, false,
+          err && err.userFacing
+            ? err.message
+            : "Could not update the order. Please try again or contact us."
+        );
+        console.error("[linesheet] edit submit error:", err);
+        btn.disabled = false;
+        btn.textContent = original;
       });
   }
 
@@ -850,8 +932,14 @@
       // Restore the saved draft into the qty inputs.
       loadDraft(content, summaryEl, true);
 
-      // Arriving from Orders → "Edit order": show the editing banner.
+      // Arriving from Orders → "Edit": show the banner and relabel the
+      // submit button — edit mode submits from the sheet, updating the
+      // existing order in place.
       renderEditBanner(summaryEl);
+      var editCtx = getEditContext();
+      if (editCtx && submitBtn) {
+        submitBtn.textContent = "Submit Changes to " + (editCtx.name || "Order") + " →";
+      }
 
       // Wire qty inputs → live summary (subtotal, MOQ shortfalls, minimum)
       content.addEventListener("input", function (e) {
