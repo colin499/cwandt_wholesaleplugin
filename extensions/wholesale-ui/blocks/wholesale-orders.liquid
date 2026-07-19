@@ -41,13 +41,7 @@
       on a larger screen. On this device you&rsquo;re browsing the regular store.
     </p>
 
-    <div class="wh-ls-header">
-      <div class="wh-ls-header-text">
-        <h1 class="wh-ls-title">Wholesale Order History</h1>
-        <p class="wh-ls-subtitle">CONTACT : {{ block.settings.contact_email | default: 'hello@cwandt.com' }}</p>
-      </div>
-    </div>
-
+    {% comment %} No page heading — the topbar names the page (2026-07-19) {% endcomment %}
     <div id="wh-orders-loading" class="wh-ls-loading" aria-live="polite">
       Loading orders&hellip;
     </div>

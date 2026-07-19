@@ -39,11 +39,8 @@
     </p>
 
     <div class="wh-ls-header wh-no-print">
-      <div class="wh-ls-header-text">
-        <h1 class="wh-ls-title">Wholesale Order Sheet</h1>
-        <p class="wh-ls-subtitle">CONTACT : {{ block.settings.contact_email | default: 'hello@cwandt.com' }}</p>
-      </div>
-
+      {% comment %} No page heading — the topbar names the page (2026-07-19).
+         The print/PDF header below keeps the full letterhead. {% endcomment %}
       {% comment %}
         Customer panel — PO number, name, company, shipping address.
         Values filled by linesheet.js from /apps/wholesale/linesheet-draft.

@@ -82,6 +82,7 @@
   font-size: 12px;
   line-height: 17px;
   text-align: left;
+  margin-left: auto; /* stays right-aligned now that the heading is gone */
   /* Panel sits at the right edge; this width pulls its LEFT edge out to
      line up with the PRINT button below (leftmost of the right-aligned
      action row). Tune this number if button labels change. */

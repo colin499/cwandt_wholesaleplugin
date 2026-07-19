@@ -34,12 +34,16 @@
     activate at all and customers browse the retail site normally). If JS
     never runs, the bar simply stays hidden — graceful.
   {% endcomment %}
+  {% liquid
+    assign wh_ls_url = block.settings.linesheet_url | default: '/pages/linesheet'
+    assign wh_orders_url = block.settings.orders_url | default: '/pages/orders'
+  %}
   <div class="wh-topbar" id="wh-topbar" hidden>
-    <span class="wh-topbar-label">Wholesale account</span>
+    <span class="wh-topbar-label">You are logged in as a wholesale partner. For questions contact hello[at]cwandt.com.</span>
     <nav class="wh-topbar-nav" aria-label="Wholesale">
-      <a href="{{ block.settings.linesheet_url | default: '/pages/linesheet' }}">Order Sheet</a>
+      <a href="{{ wh_ls_url }}"{% if request.path == wh_ls_url %} class="wh-topbar-active" aria-current="page"{% endif %}>Order Sheet</a>
       <span class="wh-topbar-sep" aria-hidden="true">|</span>
-      <a href="{{ block.settings.orders_url | default: '/pages/orders' }}">Order History</a>
+      <a href="{{ wh_orders_url }}"{% if request.path == wh_orders_url %} class="wh-topbar-active" aria-current="page"{% endif %}>Order History</a>
     </nav>
   </div>
 {% else %}

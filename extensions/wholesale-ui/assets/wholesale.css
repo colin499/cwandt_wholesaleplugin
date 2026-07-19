@@ -205,7 +205,8 @@
   white-space: nowrap;
 }
 
-.wh-topbar a:hover {
+.wh-topbar a:hover,
+.wh-topbar a.wh-topbar-active {
   text-decoration: underline;
 }
 
