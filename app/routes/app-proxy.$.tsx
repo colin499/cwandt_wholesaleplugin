@@ -887,8 +887,42 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     if (!source) return json({ error: "Order sheet not found" }, { status: 404 });
 
     const lines = parseDraftLines(source.lines);
+    // PARK a non-empty working draft instead of overwriting it — editing or
+    // reordering a previous order must not destroy the customer's draft. The
+    // parked draft is restored automatically when the sheet is next
+    // submitted (any submit frees the sheet) or when an edit is cancelled
+    // (/linesheet-unpark). Only the newest parked draft is kept.
+    const active = await getActiveDraft(session.shopifyCustomerId);
+    let parked = false;
+    if (active && parseDraftLines(active.lines).length > 0) {
+      await db.linesheetDraft.deleteMany({
+        where: { shopifyCustomerId: session.shopifyCustomerId, status: "PARKED" },
+      });
+      await db.linesheetDraft.update({ where: { id: active.id }, data: { status: "PARKED" } });
+      parked = true;
+    }
     await upsertActiveDraft(session.shopifyCustomerId, lines, source.subtotalCents);
-    return proxyJson({ ok: true, lines });
+    return proxyJson({ ok: true, lines, parked });
+  }
+
+  // ── /apps/wholesale/linesheet-unpark (POST) ─────────────────────────────
+  // Cancel-edit: discard the edit copy on the sheet and bring back the
+  // parked working draft (if any). No body.
+  if (subpath === "linesheet-unpark") {
+    const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");
+    const session = await getWholesaleSession(shopifyCustomerId);
+    if (!session) return json({ wholesale: false }, { status: 403 });
+
+    const parkedDraft = await db.linesheetDraft.findFirst({
+      where: { shopifyCustomerId: session.shopifyCustomerId, status: "PARKED" },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (!parkedDraft) return proxyJson({ ok: true, restored: false });
+
+    const active = await getActiveDraft(session.shopifyCustomerId);
+    if (active) await db.linesheetDraft.delete({ where: { id: active.id } });
+    await db.linesheetDraft.update({ where: { id: parkedDraft.id }, data: { status: "DRAFT" } });
+    return proxyJson({ ok: true, restored: true });
   }
 
   if (subpath !== "backorder") {
@@ -1541,6 +1575,16 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     await db.linesheetDraft.create({
       data: { shopifyCustomerId: wholesaleSession.shopifyCustomerId, ...submittedData },
     });
+  }
+
+  // The sheet is free again — restore a draft parked when this edit/reorder
+  // began (see /linesheet-duplicate) as the working draft.
+  const parkedDraft = await db.linesheetDraft.findFirst({
+    where: { shopifyCustomerId: wholesaleSession.shopifyCustomerId, status: "PARKED" },
+    orderBy: { updatedAt: "desc" },
+  });
+  if (parkedDraft) {
+    await db.linesheetDraft.update({ where: { id: parkedDraft.id }, data: { status: "DRAFT" } });
   }
 
   const stockFreight = !shipOwnLabel && stockItems.some((l) => l.noFreeShipping);

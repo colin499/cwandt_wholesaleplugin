@@ -95,9 +95,6 @@
      Orders list table
      ---------------------------------------------------------------------- */
 
-  // True when the customer's draft sheet has items on it (set by renderList).
-  var hasDraftItems = false;
-
   // Linesheet page URL (set in init from the block's data attribute).
   var sheetUrl = "/pages/linesheet";
 
@@ -154,11 +151,6 @@
       container.innerHTML = '<p class="wh-ls-empty">No orders yet.</p>';
       return;
     }
-
-    // The server only includes a DRAFT row when the draft sheet has items on
-    // it — its presence is what makes Reorder/Edit destructive (they overwrite
-    // the draft), so it decides whether those actions confirm first.
-    hasDraftItems = orders.some(function (o) { return o.status === "DRAFT"; });
 
     var editCtx = getEditContext();
     var html = '<table class="wh-ls-table wh-orders-table"><thead><tr>';
@@ -282,12 +274,10 @@
      Reorder — copy this order into the active draft, go to the order sheet
      ---------------------------------------------------------------------- */
 
-  // confirmText is null when the draft sheet is empty — nothing would be
-  // lost, so don't interrupt.
-  function loadIntoSheet(btn, linesheetUrl, editContext, confirmText) {
-    if (confirmText && !window.confirm(confirmText)) {
-      return;
-    }
+  // No confirm needed: a non-empty draft is PARKED server-side (not lost)
+  // and restored automatically when the edit/reorder is submitted or the
+  // edit is cancelled.
+  function loadIntoSheet(btn, linesheetUrl, editContext) {
     var original = btn.textContent;
     btn.disabled = true;
     btn.textContent = "Loading…";
@@ -301,12 +291,14 @@
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.json();
       })
-      .then(function () {
+      .then(function (data) {
         // Edit mode rides in sessionStorage: the sheet shows an "editing" banner
         // and submit sends replaces_draft_order_id. Plain reorder clears any
         // stale edit context so a fresh order can never replace an old one.
+        // `parked` tells the banner a set-aside draft will be restored.
         try {
           if (editContext) {
+            editContext.parked = !!(data && data.parked);
             sessionStorage.setItem("wh-edit-order", JSON.stringify(editContext));
           } else {
             sessionStorage.removeItem("wh-edit-order");
@@ -323,27 +315,14 @@
   }
 
   function reorder(btn, linesheetUrl) {
-    loadIntoSheet(
-      btn, linesheetUrl, null,
-      hasDraftItems
-        ? "You have an unsubmitted Draft (the top row of this list). Reordering discards its items and loads this order's items instead. Continue?"
-        : null
-    );
+    loadIntoSheet(btn, linesheetUrl, null);
   }
 
-  // No confirm needed beyond protecting the draft: the sheet shows an
-  // "editing order #X" banner, and submit asks before replacing the order.
   function editOrder(btn, linesheetUrl) {
-    loadIntoSheet(
-      btn, linesheetUrl,
-      {
-        id: btn.getAttribute("data-draft-order-id"),
-        name: btn.getAttribute("data-order-name"),
-      },
-      hasDraftItems
-        ? "You have an unsubmitted Draft (the top row of this list). Editing this order discards the Draft's items. Continue?"
-        : null
-    );
+    loadIntoSheet(btn, linesheetUrl, {
+      id: btn.getAttribute("data-draft-order-id"),
+      name: btn.getAttribute("data-order-name"),
+    });
   }
 
   /* -------------------------------------------------------------------------

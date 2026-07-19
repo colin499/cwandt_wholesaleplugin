@@ -634,7 +634,8 @@
     banner.id = "wh-ls-edit-banner";
     banner.className = "wh-ls-order-result wh-ls-order-result--success";
     banner.appendChild(document.createTextNode(
-      "Editing order " + (ctx.name || "") + " — review and submit to replace it. "
+      "Editing order " + (ctx.name || "") + " — review and submit to replace it. " +
+      (ctx.parked ? "Your saved draft was set aside and will be restored afterward. " : "")
     ));
     var cancel = document.createElement("a");
     cancel.href = "#";
@@ -642,6 +643,16 @@
     cancel.addEventListener("click", function (e) {
       e.preventDefault();
       clearEditContext();
+      // Restore the parked draft (if any) as the working sheet, then reload
+      // so the sheet prefills from it. Reload happens regardless — cancelling
+      // must always leave a coherent sheet.
+      fetch("/apps/wholesale/linesheet-unpark", {
+        method: "POST",
+        credentials: "same-origin",
+      }).then(
+        function () { window.location.reload(); },
+        function () { window.location.reload(); }
+      );
     });
     banner.appendChild(cancel);
     summaryEl.parentNode.insertBefore(banner, summaryEl);
