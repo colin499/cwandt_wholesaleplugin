@@ -40,23 +40,30 @@
       `display: revert !important` — that also wipes the theme's own hides
       (e.g. the sale/compare-at price twin), showing the price twice.
     {% endcomment %}
-    html:not(.wh-show-retail) product-price,
-    html:not(.wh-show-retail) .price,
-    html:not(.wh-show-retail) .price__regular,
-    html:not(.wh-show-retail) .price__sale,
-    html:not(.wh-show-retail) .price--main,
-    html:not(.wh-show-retail) .price-item--regular,
-    html:not(.wh-show-retail) .price-item--sale,
-    html:not(.wh-show-retail) [class*="product__price"],
-    html:not(.wh-show-retail) [class*="ProductPrice"] {
-      display: none !important;
-    }
-    /* Wholesale PDP is informational — ordering happens on the line sheet.
-       Quantity selector and buy buttons hide the same conditional way. */
-    html:not(.wh-show-retail) .product-form__quantity,
-    html:not(.wh-show-retail) .product-form__buttons,
-    html:not(.wh-show-retail) .product__inventory {
-      display: none !important;
+    {% comment %}
+      Desktop/tablet only (min-width 750px): on phones the wholesale UI does
+      not activate at all — logged-in wholesalers browse the retail site
+      normally (matches WH_DESKTOP in wholesale.js).
+    {% endcomment %}
+    @media (min-width: 750px) {
+      html:not(.wh-show-retail) product-price,
+      html:not(.wh-show-retail) .price,
+      html:not(.wh-show-retail) .price__regular,
+      html:not(.wh-show-retail) .price__sale,
+      html:not(.wh-show-retail) .price--main,
+      html:not(.wh-show-retail) .price-item--regular,
+      html:not(.wh-show-retail) .price-item--sale,
+      html:not(.wh-show-retail) [class*="product__price"],
+      html:not(.wh-show-retail) [class*="ProductPrice"] {
+        display: none !important;
+      }
+      /* Wholesale PDP is informational — ordering happens on the line sheet.
+         Quantity selector and buy buttons hide the same conditional way. */
+      html:not(.wh-show-retail) .product-form__quantity,
+      html:not(.wh-show-retail) .product-form__buttons,
+      html:not(.wh-show-retail) .product__inventory {
+        display: none !important;
+      }
     }
   {% endstyle %}
 

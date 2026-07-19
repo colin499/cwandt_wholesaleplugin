@@ -14,6 +14,28 @@
   color: #000;
 }
 
+/* Phones (< 750px): wholesale is desktop-only — the sheet/orders UI is
+   hidden and the note shows instead (companion to WH_DESKTOP in
+   wholesale.js). The wide table never has to work on a phone. */
+.wh-mobile-note {
+  display: none;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 749.98px) {
+  .wh-linesheet > :not(.wh-mobile-note) {
+    display: none !important;
+  }
+
+  .wh-mobile-note {
+    display: block;
+  }
+}
+
 #wh-linesheet-content {
   overflow-x: auto;
 }

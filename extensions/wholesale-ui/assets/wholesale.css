@@ -173,32 +173,58 @@
 }
 
 /* --------------------------------------------------------------------------
-   Header wholesale nav — ORDER SHEET | ORDER HISTORY in the cart button's
-   spot (inserted by wholesale.js 9b into .header__cart)
+   Wholesale top bar — slim banner ABOVE the theme header (moved to the top
+   of <body> by wholesale.js 9b). Desktop/tablet only.
    -------------------------------------------------------------------------- */
-.wh-header-nav {
+.wh-topbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-right: 12px; /* breathing room before the cart button when visible */
-}
-
-.wh-header-nav a {
-  color: #fff;
+  padding: 7px 20px;
+  background: #f3f3f3;
+  color: #000;
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.wh-topbar-label {
+  margin-right: auto;
+  opacity: 0.6;
+}
+
+.wh-topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.wh-topbar a {
+  color: #000;
   text-decoration: none;
   white-space: nowrap;
 }
 
-.wh-header-nav a:hover {
+.wh-topbar a:hover {
   text-decoration: underline;
 }
 
-.wh-header-nav-sep {
-  color: #fff;
+.wh-topbar-sep {
   opacity: 0.5;
+}
+
+/* --------------------------------------------------------------------------
+   Phones (< 750px): the wholesale UI does not exist — logged-in wholesalers
+   browse the retail site normally. Companion to WH_DESKTOP in wholesale.js
+   and the media-scoped price-hiding CSS in wholesale-price.liquid.
+   -------------------------------------------------------------------------- */
+@media (max-width: 749.98px) {
+  .wh-topbar,
+  .wh-account-badge,
+  .wh-price-block,
+  .wh-price-skeleton {
+    display: none !important;
+  }
 }
 
 /* --------------------------------------------------------------------------

@@ -30,6 +30,13 @@
   var SK_STATUS = "wh_status";    // "1" | "0"
   var SK_PRICES = "wh_prices4_";  // + productId → JSON (v4: adds dist_price)
 
+  // Wholesale UI is desktop/tablet-only (>= 750px): on phones a logged-in
+  // wholesaler browses the RETAIL site normally (prices, cart, no banner) —
+  // per Taylor 2026-07-19, so handing the phone to a friend shows the normal
+  // store. The price-hiding CSS is media-scoped the same way in the price
+  // block's {% style %}. Checked once at load, like the theme's own layout.
+  var WH_DESKTOP = !window.matchMedia || window.matchMedia("(min-width: 750px)").matches;
+
   /* -------------------------------------------------------------------------
      1. Determine wholesale status
         Fast path: sessionStorage cache (instant, all pages after first visit)
@@ -305,39 +312,38 @@
          orders on the linesheet, so their history lives at /pages/orders
          (wholesale-orders block) — repoint the link. This script only loads
          for wholesale-tagged customers, so retail buyers keep the theme link.
+         Desktop only — on phones the account menu stays fully retail.
      ---------------------------------------------------------------------- */
 
-  document.querySelectorAll(".wh-account-menu a").forEach(function (a) {
-    var isOrdersLink =
-      a.textContent.trim().toLowerCase() === "orders" ||
-      /\/account\/orders\b/.test(a.getAttribute("href") || "");
-    if (isOrdersLink) a.setAttribute("href", "/pages/orders");
-  });
+  if (WH_DESKTOP) {
+    document.querySelectorAll(".wh-account-menu a").forEach(function (a) {
+      var isOrdersLink =
+        a.textContent.trim().toLowerCase() === "orders" ||
+        /\/account\/orders\b/.test(a.getAttribute("href") || "");
+      if (isOrdersLink) a.setAttribute("href", "/pages/orders");
+    });
 
-  // The dropdown trigger itself ("WHOLESALE : NAME") linked to Shopify's
-  // hosted account page, which shows a generic order list — confusing next to
-  // the wholesale order history. Send wholesale customers to the order
-  // history instead; profile/addresses stay reachable via "Account Info".
-  document.querySelectorAll("a.wh-account").forEach(function (a) {
-    a.setAttribute("href", "/pages/orders");
-  });
+    // The dropdown trigger itself ("WHOLESALE : NAME") linked to Shopify's
+    // hosted account page, which shows a generic order list — confusing next to
+    // the wholesale order history. Send wholesale customers to the order
+    // history instead; profile/addresses stay reachable via "Account Info".
+    document.querySelectorAll("a.wh-account").forEach(function (a) {
+      a.setAttribute("href", "/pages/orders");
+    });
+  }
 
   /* -------------------------------------------------------------------------
-     9b. Header top-right: ORDER SHEET | ORDER HISTORY
-         The wholesale-global embed hides the theme's header cart link while
-         the cart is empty (CSS, server-side, wholesale customers only) and
-         renders a <template> with the two wholesale nav links; this inserts
-         them where the cart button is/was. Same selector on both sides: if
-         the theme header changes, the hide and the insert fail together and
-         the header reverts to the normal cart button.
+     9b. Wholesale top bar — rendered (hidden) at the end of <body> by the
+         wholesale-global embed; move it to the top so it sits ABOVE the theme
+         header, then reveal. The theme header itself is untouched.
      ---------------------------------------------------------------------- */
 
-  function installHeaderNav() {
-    var tpl = document.getElementById("wh-header-nav-tpl");
-    var cartLink = document.querySelector(".header__cart .custom-cart-icon");
-    if (!tpl || !tpl.content || !cartLink) return;
-    if (document.querySelector(".wh-header-nav")) return; // idempotent
-    cartLink.parentNode.insertBefore(tpl.content.cloneNode(true), cartLink);
+  function installTopbar() {
+    var bar = document.getElementById("wh-topbar");
+    if (!bar || bar.__whInstalled) return; // idempotent
+    bar.__whInstalled = true;
+    document.body.insertBefore(bar, document.body.firstChild);
+    bar.removeAttribute("hidden");
   }
 
   /* -------------------------------------------------------------------------
@@ -389,13 +395,16 @@
 
   function init() {
     resolveWholesaleStatus(function (isWholesale) {
-      if (!isWholesale) {
+      // Phones (or non-wholesale): plain retail site — no banner, no price
+      // block, no MOQ enforcement. The price-hiding CSS is media-scoped to
+      // >= 750px, so retail prices already show on phones without JS help.
+      if (!isWholesale || !WH_DESKTOP) {
         document.querySelectorAll(".wh-price-skeleton").forEach(function (el) {
           el.setAttribute("hidden", "");
         });
         return;
       }
-      installHeaderNav();  // header: ORDER SHEET | ORDER HISTORY
+      installTopbar();     // banner above the theme header
       runWholesaleUI();    // product-page price block
     });
   }

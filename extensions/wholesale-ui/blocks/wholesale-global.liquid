@@ -27,31 +27,21 @@
   <script src="{{ 'wholesale.js' | asset_url }}" defer></script>
 
   {% comment %}
-    Header top-right for wholesale: ORDER SHEET | ORDER HISTORY text links in
-    the cart button's spot (wholesale.js inserts them from this template).
-    The retail cart button is hidden server-side (no flash) — but only while
-    the cart is EMPTY: wholesale customers can still buy non-program products
-    at retail, so a cart with items brings the button (and count) back.
-    The hide CSS and the JS insert target the SAME theme selector, so if the
-    theme's header markup ever changes they fail together and the header
-    simply reverts to the normal cart button.
+    Wholesale top bar — a slim banner ABOVE the theme header with the two
+    wholesale surfaces. The theme header (incl. cart) stays fully stock.
+    Rendered hidden at the end of body; wholesale.js moves it to the top of
+    <body> and reveals it (desktop only — on phones the wholesale UI doesn't
+    activate at all and customers browse the retail site normally). If JS
+    never runs, the bar simply stays hidden — graceful.
   {% endcomment %}
-  {% if cart.item_count == 0 %}
-    {% style %}
-      .header__cart .custom-cart-icon { display: none !important; }
-    {% endstyle %}
-  {% endif %}
-  <template id="wh-header-nav-tpl">
-    <nav class="wh-header-nav" aria-label="Wholesale">
+  <div class="wh-topbar" id="wh-topbar" hidden>
+    <span class="wh-topbar-label">Wholesale account</span>
+    <nav class="wh-topbar-nav" aria-label="Wholesale">
       <a href="{{ block.settings.linesheet_url | default: '/pages/linesheet' }}">Order Sheet</a>
-      <span class="wh-header-nav-sep" aria-hidden="true">|</span>
+      <span class="wh-topbar-sep" aria-hidden="true">|</span>
       <a href="{{ block.settings.orders_url | default: '/pages/orders' }}">Order History</a>
-      {% comment %} Trailing separator only when the cart button is visible {% endcomment %}
-      {% if cart.item_count > 0 %}
-        <span class="wh-header-nav-sep" aria-hidden="true">|</span>
-      {% endif %}
     </nav>
-  </template>
+  </div>
 {% else %}
   <meta name="wh-customer" content="0">
 {% endif %}
