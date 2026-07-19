@@ -32,41 +32,31 @@
     your specific theme if needed (inspect the theme's price element classes).
   {% endcomment %}
   {% style %}
-    product-price,
-    .price,
-    .price__regular,
-    .price__sale,
-    .price--main,
-    .price-item--regular,
-    .price-item--sale,
-    [class*="product__price"],
-    [class*="ProductPrice"] {
+    {% comment %}
+      The hide is CONDITIONAL on html not having .wh-show-retail (set by
+      wholesale.js when the product is NOT in the wholesale program). When the
+      class appears, these rules simply stop matching and the THEME's own
+      styling takes over untouched. Never force-reveal with
+      `display: revert !important` — that also wipes the theme's own hides
+      (e.g. the sale/compare-at price twin), showing the price twice.
+    {% endcomment %}
+    html:not(.wh-show-retail) product-price,
+    html:not(.wh-show-retail) .price,
+    html:not(.wh-show-retail) .price__regular,
+    html:not(.wh-show-retail) .price__sale,
+    html:not(.wh-show-retail) .price--main,
+    html:not(.wh-show-retail) .price-item--regular,
+    html:not(.wh-show-retail) .price-item--sale,
+    html:not(.wh-show-retail) [class*="product__price"],
+    html:not(.wh-show-retail) [class*="ProductPrice"] {
       display: none !important;
     }
     /* Wholesale PDP is informational — ordering happens on the line sheet.
-       Hide the quantity selector and buy buttons (revealed again via
-       html.wh-show-retail when the product is NOT in the program). */
-    .product-form__quantity,
-    .product-form__buttons,
-    .product__inventory {
+       Quantity selector and buy buttons hide the same conditional way. */
+    html:not(.wh-show-retail) .product-form__quantity,
+    html:not(.wh-show-retail) .product-form__buttons,
+    html:not(.wh-show-retail) .product__inventory {
       display: none !important;
-    }
-    /* Reveal retail again when wholesale.js determines this product is NOT
-       in the wholesale program (no CMS prices). Without this, a wholesale
-       customer would see no price at all on retail-only products. */
-    html.wh-show-retail product-price,
-    html.wh-show-retail .price,
-    html.wh-show-retail .price__regular,
-    html.wh-show-retail .price__sale,
-    html.wh-show-retail .price--main,
-    html.wh-show-retail .price-item--regular,
-    html.wh-show-retail .price-item--sale,
-    html.wh-show-retail [class*="product__price"],
-    html.wh-show-retail [class*="ProductPrice"],
-    html.wh-show-retail .product-form__quantity,
-    html.wh-show-retail .product-form__buttons,
-    html.wh-show-retail .product__inventory {
-      display: revert !important;
     }
   {% endstyle %}
 
