@@ -28,7 +28,10 @@
   window.__whWholesaleInit = true;
 
   var SK_STATUS = "wh_status";    // "1" | "0"
-  var SK_PRICES = "wh_prices4_";  // + productId → JSON (v4: adds dist_price)
+  var SK_PRICES = "wh_prices5_";  // + productId → {t, data} (v5: TTL wrapper)
+  // Cache lifetime — server-side changes (MOQ exemption, CMS prices) must
+  // reach an open browser session within minutes. Mirrors linesheet.js.
+  var PRICES_TTL_MS = 10 * 60 * 1000;
 
   // Wholesale UI is desktop/tablet-only (>= 750px): on phones a logged-in
   // wholesaler browses the RETAIL site normally (prices, cart, no banner) —
@@ -92,11 +95,13 @@
 
     if (raw) {
       try {
-        callback(null, JSON.parse(raw));
-        return;
-      } catch (_) {
-        sessionStorage.removeItem(cacheKey);
-      }
+        var wrapped = JSON.parse(raw);
+        if (wrapped && wrapped.t && wrapped.data && Date.now() - wrapped.t < PRICES_TTL_MS) {
+          callback(null, wrapped.data);
+          return;
+        }
+      } catch (_) { /* fall through to refetch */ }
+      sessionStorage.removeItem(cacheKey);
     }
 
     var url =
@@ -113,7 +118,7 @@
       .then(function (data) {
         if (data && data.wholesale) {
           try {
-            sessionStorage.setItem(cacheKey, JSON.stringify(data));
+            sessionStorage.setItem(cacheKey, JSON.stringify({ t: Date.now(), data: data }));
           } catch (_) { /* storage full */ }
         }
         callback(null, data);

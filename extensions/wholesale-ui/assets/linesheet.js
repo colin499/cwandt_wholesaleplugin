@@ -17,7 +17,11 @@
   "use strict";
 
   var SK_STATUS    = "wh_status";
-  var SK_LINESHEET = "wh_linesheet_v5"; // versioned key — bump if response shape changes (v5: dist_price)
+  var SK_LINESHEET = "wh_linesheet_v6"; // versioned key — bump if cache shape changes (v6: {t, data} TTL wrapper)
+  // Cache lifetime: server-side changes (MOQ exemption, CMS prices, program
+  // membership) must reach an already-open browser session within minutes,
+  // not "whenever the tab closes".
+  var LINESHEET_TTL_MS = 10 * 60 * 1000;
 
   /* -------------------------------------------------------------------------
      Wholesale status check (mirrors wholesale.js — synchronous)
@@ -54,11 +58,13 @@
     var cached = sessionStorage.getItem(SK_LINESHEET);
     if (cached) {
       try {
-        callback(null, JSON.parse(cached));
-        return;
-      } catch (_) {
-        sessionStorage.removeItem(SK_LINESHEET);
-      }
+        var wrapped = JSON.parse(cached);
+        if (wrapped && wrapped.t && wrapped.data && Date.now() - wrapped.t < LINESHEET_TTL_MS) {
+          callback(null, wrapped.data);
+          return;
+        }
+      } catch (_) { /* fall through to refetch */ }
+      sessionStorage.removeItem(SK_LINESHEET);
     }
 
     fetch("/apps/wholesale/linesheet-data", { credentials: "same-origin" })
@@ -69,7 +75,7 @@
       .then(function (data) {
         if (data && data.wholesale) {
           try {
-            sessionStorage.setItem(SK_LINESHEET, JSON.stringify(data));
+            sessionStorage.setItem(SK_LINESHEET, JSON.stringify({ t: Date.now(), data: data }));
           } catch (_) { /* storage full — skip cache */ }
         }
         callback(null, data);
