@@ -474,13 +474,14 @@
   letter-spacing: 0.06em;
 }
 
-/* Subtotal row — only the right-side cells read as a row */
+/* Subtotal row */
 .wh-orders-detail-table tfoot td {
   border-bottom: none;
+  background: #f3f3f3;
 }
 
-.wh-orders-subtotal-pad {
-  border-right: 1px solid #000;
+.wh-orders-detail-table thead th {
+  background: #dcdcdc;
 }
 
 .wh-orders-subtotal-cell {
