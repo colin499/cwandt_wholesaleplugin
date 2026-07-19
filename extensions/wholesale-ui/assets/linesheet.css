@@ -467,6 +467,19 @@
   background: #f5f5f5;
 }
 
+/* The draft slot — first row, yellow: either the working draft or the
+   CREATE DRAFT ORDER invitation when no draft exists. */
+.wh-orders-row--draft td,
+.wh-orders-row--draft:hover td,
+.wh-orders-create-row td {
+  background: yellow;
+}
+
+.wh-orders-create-row td {
+  text-align: center;
+  padding: 10px 12px;
+}
+
 .wh-orders-detail > td {
   padding: 14px 12px;
   cursor: default;
@@ -487,14 +500,16 @@
   color: #000;
 }
 
-/* Plain-language status explanation — sentence case inside the uppercase head */
+/* Plain-language status explanation inside the detail head */
 .wh-orders-tip {
-  text-transform: none;
   letter-spacing: normal;
-  color: blue;
+  color: black;
+  opacity: 1;
+  text-transform: uppercase;
+  font-style: italic;
 }
 
-/* Tracking links ride inside the tip — same blue, underline marks the link */
+/* Tracking links ride inside the tip — underline marks the link */
 .wh-orders-tip a {
   color: inherit;
 }

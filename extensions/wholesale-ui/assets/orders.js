@@ -166,21 +166,27 @@
   }
 
   function renderList(container, orders) {
-    if (!orders || orders.length === 0) {
-      container.innerHTML = '<p class="wh-ls-empty">No orders yet.</p>';
-      return;
-    }
-
+    orders = orders || [];
     hasDraftItems = orders.some(function (o) { return o.status === "DRAFT"; });
 
     var html = '<table class="wh-ls-table wh-orders-table"><thead><tr>';
     html += "<th>Order</th><th>Date</th><th>PO #</th><th>Items</th><th>Total</th><th>Status</th><th>Actions</th>";
     html += "</tr></thead><tbody>";
 
+    // The yellow draft slot always leads the table: the working draft when
+    // one exists (rendered below), otherwise an invitation to start one.
+    if (!hasDraftItems) {
+      html +=
+        '<tr class="wh-orders-create-row"><td colspan="7">' +
+        '<a class="wh-ls-btn wh-ls-btn--small" href="' + esc(sheetUrl) + '">Create Draft Order</a>' +
+        "</td></tr>";
+    }
+
     orders.forEach(function (o) {
       var name = esc(o.order_name);
       html +=
-        '<tr class="wh-orders-row" data-order-id="' + esc(o.id) + '" data-status="' + esc(o.status) + '" tabindex="0">' +
+        '<tr class="wh-orders-row' + (o.status === "DRAFT" ? " wh-orders-row--draft" : "") + '"' +
+        ' data-order-id="' + esc(o.id) + '" data-status="' + esc(o.status) + '" tabindex="0">' +
         "<td>" + name + "</td>" +
         "<td>" + esc(formatDate(o.submitted_at)) + "</td>" +
         "<td>" + esc(o.po_number || "—") + "</td>" +
