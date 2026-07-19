@@ -323,19 +323,20 @@
   });
 
   /* -------------------------------------------------------------------------
-     9b. Header cart button → line sheet icon
-         The wholesale-global embed hides the theme's header cart link (CSS,
-         server-side, wholesale customers only) and renders a <template> with
-         the linesheet icon link; this inserts it where the cart button was.
-         Same selector on both sides: if the theme header changes, the hide
-         and the insert fail together and the cart button simply returns.
+     9b. Header top-right: ORDER SHEET | ORDER HISTORY
+         The wholesale-global embed hides the theme's header cart link while
+         the cart is empty (CSS, server-side, wholesale customers only) and
+         renders a <template> with the two wholesale nav links; this inserts
+         them where the cart button is/was. Same selector on both sides: if
+         the theme header changes, the hide and the insert fail together and
+         the header reverts to the normal cart button.
      ---------------------------------------------------------------------- */
 
-  function installHeaderLinesheetIcon() {
-    var tpl = document.getElementById("wh-header-linesheet-tpl");
+  function installHeaderNav() {
+    var tpl = document.getElementById("wh-header-nav-tpl");
     var cartLink = document.querySelector(".header__cart .custom-cart-icon");
     if (!tpl || !tpl.content || !cartLink) return;
-    if (document.querySelector(".wh-header-linesheet")) return; // idempotent
+    if (document.querySelector(".wh-header-nav")) return; // idempotent
     cartLink.parentNode.insertBefore(tpl.content.cloneNode(true), cartLink);
   }
 
@@ -394,7 +395,7 @@
         });
         return;
       }
-      installHeaderLinesheetIcon();  // header cart → linesheet icon
+      installHeaderNav();  // header: ORDER SHEET | ORDER HISTORY
       runWholesaleUI();    // product-page price block
     });
   }

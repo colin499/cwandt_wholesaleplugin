@@ -27,24 +27,26 @@
   <script src="{{ 'wholesale.js' | asset_url }}" defer></script>
 
   {% comment %}
-    Header cart button → line sheet icon. The theme cart is irrelevant to
-    wholesale ordering (the linesheet is the only ordering surface), so this
-    hides the header cart link server-side (no flash) and wholesale.js swaps
-    in the linesheet icon at the same spot from this template. The hide CSS
-    and the JS insert target the SAME selector, so if the theme's header
-    markup ever changes they fail together and the cart button simply returns.
+    Header top-right for wholesale: ORDER SHEET | ORDER HISTORY text links in
+    the cart button's spot (wholesale.js inserts them from this template).
+    The retail cart button is hidden server-side (no flash) — but only while
+    the cart is EMPTY: wholesale customers can still buy non-program products
+    at retail, so a cart with items brings the button (and count) back.
+    The hide CSS and the JS insert target the SAME theme selector, so if the
+    theme's header markup ever changes they fail together and the header
+    simply reverts to the normal cart button.
   {% endcomment %}
-  {% style %}
-    .header__cart .custom-cart-icon { display: none !important; }
-  {% endstyle %}
-  <template id="wh-header-linesheet-tpl">
-    <a
-      href="{{ block.settings.linesheet_url | default: '/pages/linesheet' }}"
-      class="wh-header-linesheet"
-      aria-label="Wholesale order sheet"
-    >
-      <img src="{{ 'linesheet-icon.png' | asset_url }}" alt="Order sheet" width="77" height="98">
-    </a>
+  {% if cart.item_count == 0 %}
+    {% style %}
+      .header__cart .custom-cart-icon { display: none !important; }
+    {% endstyle %}
+  {% endif %}
+  <template id="wh-header-nav-tpl">
+    <nav class="wh-header-nav" aria-label="Wholesale">
+      <a href="{{ block.settings.linesheet_url | default: '/pages/linesheet' }}">Order Sheet</a>
+      <span class="wh-header-nav-sep" aria-hidden="true">|</span>
+      <a href="{{ block.settings.orders_url | default: '/pages/orders' }}">Order History</a>
+    </nav>
   </template>
 {% else %}
   <meta name="wh-customer" content="0">
@@ -59,7 +61,13 @@
       "type": "url",
       "id": "linesheet_url",
       "label": "Linesheet page URL",
-      "info": "Where the header icon links to. Defaults to /pages/linesheet."
+      "info": "Header 'Order Sheet' link. Defaults to /pages/linesheet."
+    },
+    {
+      "type": "url",
+      "id": "orders_url",
+      "label": "Order history page URL",
+      "info": "Header 'Order History' link. Defaults to /pages/orders."
     }
   ]
 }

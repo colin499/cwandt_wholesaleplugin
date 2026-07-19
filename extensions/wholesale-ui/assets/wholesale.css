@@ -173,20 +173,31 @@
 }
 
 /* --------------------------------------------------------------------------
-   Header linesheet icon — replaces the theme cart button for wholesale
-   customers (inserted by wholesale.js 9b into .header__cart)
+   Header wholesale nav — ORDER SHEET | ORDER HISTORY in the cart button's
+   spot (inserted by wholesale.js 9b into .header__cart)
    -------------------------------------------------------------------------- */
-.wh-header-linesheet {
+.wh-header-nav {
   display: flex;
   align-items: center;
-  justify-content: center;
-  text-decoration: none;
+  gap: 10px;
 }
 
-.wh-header-linesheet img {
-  display: block;
-  height: 22px;
-  width: auto;
+.wh-header-nav a {
+  color: #fff;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.wh-header-nav a:hover {
+  text-decoration: underline;
+}
+
+.wh-header-nav-sep {
+  color: #fff;
+  opacity: 0.5;
 }
 
 /* --------------------------------------------------------------------------
