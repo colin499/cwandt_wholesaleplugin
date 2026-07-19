@@ -11,7 +11,7 @@ automatically_update_urls_on_dev = true
 dev_store_url = "cwt-apps.myshopify.com"
 
 [access_scopes]
-scopes = "read_customers,write_customers,read_products,write_products,read_orders,write_orders,read_inventory,write_inventory,read_draft_orders,write_draft_orders,read_shipping,write_shipping,read_discounts,write_discounts,read_price_rules,write_price_rules,read_payment_terms,write_payment_terms,read_delivery_customizations,write_delivery_customizations"
+scopes = "read_customers,write_customers,read_products,write_products,read_orders,write_orders,read_inventory,write_inventory,read_draft_orders,write_draft_orders,read_shipping,write_shipping,read_discounts,write_discounts,read_price_rules,write_price_rules,read_payment_terms,write_payment_terms,read_delivery_customizations,write_delivery_customizations,read_order_edits,write_order_edits"
 
 [auth]
 redirect_urls = [

@@ -36,7 +36,8 @@
     REFUNDED: "This order was returned and refunded.",
   };
 
-  // SUBMITTED has two special flavors that change what happens next.
+  // SUBMITTED has two special flavors that change what happens next, and a
+  // PREPARING order can carry a balance after items were added to it.
   function statusTip(order) {
     if (order.status === "SUBMITTED" || order.status === "INVOICE_SENT") {
       if (order.freight_quote) {
@@ -45,6 +46,10 @@
       if (order.backorder) {
         return "Everything on this order is on backorder — we'll send your invoice when stock arrives and it's ready to ship.";
       }
+    }
+    if (order.status === "PREPARING" && order.balance_due_cents > 0) {
+      return "Items were added to this order — pay the remaining balance of " +
+        formatMoney(order.balance_due_cents) + " and we'll ship everything together.";
     }
     return STATUS_TIP[order.status] || "";
   }
@@ -97,10 +102,22 @@
   // replaces the draft, so it confirms first when that would lose anything.
   var hasDraftItems = false;
 
+  function editButtonHTML(o, secondary) {
+    return (
+      '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-orders-edit' +
+      (secondary ? " wh-orders-action-2" : "") + '"' +
+      ' data-order-id="' + esc(o.id) + '"' +
+      ' data-draft-order-id="' + esc(o.draft_order_id) + '"' +
+      ' data-order-name="' + esc(o.order_name) + '"' +
+      ' data-paid="' + (o.status === "PREPARING" ? "1" : "") + '"' +
+      ' title="Open this order on the sheet and update it in place">Edit</button>'
+    );
+  }
+
   // ACTIONS column: primary action (or note) first, then EDIT while the
-  // order is still editable. Editing ends the moment the draft becomes a
-  // real Shopify order (payment, or net-terms auto-queue) — from PREPARING
-  // on, the only action is Reorder.
+  // order is still editable. Unpaid orders edit fully in place; a paid but
+  // unshipped order (PREPARING) accepts additions only, and carries a PAY
+  // BALANCE link once items were added. From first shipment on: Reorder.
   function actionsHTML(o) {
     if (o.status === "DRAFT") {
       return (
@@ -125,17 +142,20 @@
               : "Awaiting invoice") +
           "</span>";
       }
-      if (o.draft_order_id) {
-        html +=
-          '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-orders-edit wh-orders-action-2"' +
-          ' data-order-id="' + esc(o.id) + '"' +
-          ' data-draft-order-id="' + esc(o.draft_order_id) + '"' +
-          ' data-order-name="' + esc(o.order_name) + '"' +
-          ' title="Open this order on the sheet and update it in place">Edit</button>';
-      }
+      if (o.draft_order_id) html += editButtonHTML(o, true);
       return html;
     }
-    if (o.status === "PREPARING" || o.status === "PARTIALLY_SHIPPED" || o.status === "SHIPPED" || o.status === "CANCELLED" || o.status === "REFUNDED") {
+    if (o.status === "PREPARING") {
+      var h = "";
+      if (o.pay_balance_url && o.balance_due_cents > 0) {
+        h +=
+          '<a class="wh-ls-btn wh-ls-btn--small wh-ls-btn--cart" href="' + esc(o.pay_balance_url) +
+          '" target="_blank" rel="noopener">Pay balance</a>';
+      }
+      if (o.draft_order_id) h += editButtonHTML(o, h !== "");
+      return h;
+    }
+    if (o.status === "PARTIALLY_SHIPPED" || o.status === "SHIPPED" || o.status === "CANCELLED" || o.status === "REFUNDED") {
       return (
         '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-orders-reorder"' +
         ' data-order-id="' + esc(o.id) + '"' +
@@ -321,7 +341,11 @@
       })
       .then(function (data) {
         if (!data || !data.ok) throw new Error("Bad response");
-        setEditContext({ id: data.draft_order_id, name: data.order_name });
+        setEditContext({
+          id: data.draft_order_id,
+          name: data.order_name,
+          paid: btn.getAttribute("data-paid") === "1",
+        });
         window.location.href = linesheetUrl;
       })
       .catch(function (err) {

@@ -235,6 +235,8 @@ async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
       invoiceUrl: string | null;
       freightQuote: boolean;
       backorder: boolean;
+      balanceDueCents: number;
+      payBalanceUrl: string | null;
       tracking: Array<{ number: string | null; url: string | null; company: string | null }>;
     }
   >();
@@ -252,6 +254,8 @@ async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
               cancelledAt
               displayFulfillmentStatus
               displayFinancialStatus
+              totalOutstandingSet { shopMoney { amount } }
+              paymentCollectionDetails { additionalPaymentCollectionUrl }
               fulfillments(first: 10) {
                 trackingInfo(first: 5) { number url company }
               }
@@ -268,8 +272,17 @@ async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
       const numericId = String(node.id.split("/").pop());
       const order = node.order;
       let key = "SUBMITTED";
+      let balanceDueCents = 0;
+      let payBalanceUrl: string | null = null;
       const tracking: Array<{ number: string | null; url: string | null; company: string | null }> = [];
       if (order) {
+        balanceDueCents = Math.round(
+          parseFloat(order.totalOutstandingSet?.shopMoney?.amount ?? "0") * 100
+        );
+        payBalanceUrl =
+          balanceDueCents > 0
+            ? order.paymentCollectionDetails?.additionalPaymentCollectionUrl ?? null
+            : null;
         for (const f of order.fulfillments ?? []) {
           for (const t of f.trackingInfo ?? []) {
             if (t.number || t.url) {
@@ -294,14 +307,30 @@ async function fetchDraftOrderStatuses(admin: any, draftOrderIds: string[]) {
       // arrives). The link appears once staff send the invoice (INVOICE_SENT).
       const invoiceUrl =
         key === "SUBMITTED" && (freightQuote || backorder) ? null : node.invoiceUrl ?? null;
-      map.set(numericId, { key, invoiceUrl, freightQuote, backorder, tracking });
+      map.set(numericId, {
+        key,
+        invoiceUrl,
+        freightQuote,
+        backorder,
+        balanceDueCents,
+        payBalanceUrl,
+        tracking,
+      });
     }
     // Ids the query resolved to nothing: the draft was deleted in Shopify
     // Admin — that's how staff cancel an order that hasn't been paid yet.
     // (Transient lookup failures throw above and leave the map empty instead.)
     for (const id of draftOrderIds) {
       if (!map.has(id)) {
-        map.set(id, { key: "CANCELLED", invoiceUrl: null, freightQuote: false, backorder: false, tracking: [] });
+        map.set(id, {
+          key: "CANCELLED",
+          invoiceUrl: null,
+          freightQuote: false,
+          backorder: false,
+          balanceDueCents: 0,
+          payBalanceUrl: null,
+          tracking: [],
+        });
       }
     }
   } catch (err) {
@@ -689,9 +718,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       );
       const st =
         sheet.status === "DRAFT"
-          ? { key: "DRAFT", invoiceUrl: null, freightQuote: false, backorder: false, tracking: [] }
+          ? { key: "DRAFT", invoiceUrl: null, freightQuote: false, backorder: false, balanceDueCents: 0, payBalanceUrl: null, tracking: [] }
           : statusMap.get(sheet.shopifyDraftOrderId ?? "") ??
-            { key: "SUBMITTED", invoiceUrl: null, freightQuote: false, backorder: false, tracking: [] };
+            { key: "SUBMITTED", invoiceUrl: null, freightQuote: false, backorder: false, balanceDueCents: 0, payBalanceUrl: null, tracking: [] };
 
       // Enrich lines with current catalog info. Unit prices are today's
       // wholesale prices (null if the variant left the program) — the
@@ -745,6 +774,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           invoice_url: st.invoiceUrl,
           freight_quote: st.freightQuote,
           backorder: st.backorder,
+          balance_due_cents: st.balanceDueCents,
+          pay_balance_url: st.payBalanceUrl,
           tracking: st.tracking,
           draft_order_id: sheet.shopifyDraftOrderId,
           lines: lines.map((l) => {
@@ -807,6 +838,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
               invoice_url: null,
               freight_quote: false,
               backorder: false,
+              balance_due_cents: 0,
+              pay_balance_url: null,
               tracking: [] as Array<never>,
               draft_order_id: null,
             },
@@ -821,7 +854,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           const lines = parseDraftLines(s.lines);
           const st =
             statusMap.get(s.shopifyDraftOrderId ?? "") ??
-            { key: "SUBMITTED", invoiceUrl: null, freightQuote: false, backorder: false, tracking: [] };
+            { key: "SUBMITTED", invoiceUrl: null, freightQuote: false, backorder: false, balanceDueCents: 0, payBalanceUrl: null, tracking: [] };
           return {
             id: s.id,
             order_name: s.orderName || "—",
@@ -834,6 +867,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
             invoice_url: st.invoiceUrl,
             freight_quote: st.freightQuote,
             backorder: st.backorder,
+            balance_due_cents: st.balanceDueCents,
+            pay_balance_url: st.payBalanceUrl,
             tracking: st.tracking,
             draft_order_id: s.shopifyDraftOrderId,
           };
@@ -1246,9 +1281,12 @@ async function handleLinesheetOrder(request: Request, url: URL) {
 
   const { admin } = await unauthenticated.admin(shop);
 
-  // Editing an unpaid order: validate the target BEFORE touching anything.
-  // A failure at any point leaves the original order intact.
-  let editTarget: { rowId: string; gid: string; name: string } | null = null;
+  // Editing an order: validate the target BEFORE touching anything. A still-
+  // open draft is updated in place (draftOrderUpdate); a COMPLETED draft
+  // whose real order is unshipped goes through the Order Edit API instead
+  // (additions only — see the order-edit branch). Shipped/cancelled = no.
+  let editTarget: { rowId: string; gid: string; name: string; orderGid: string | null } | null =
+    null;
   if (editOfDraftOrderId) {
     const row = await db.wholesaleOrder.findFirst({
       where: {
@@ -1265,21 +1303,39 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     const gid = `gid://shopify/DraftOrder/${editOfDraftOrderId}`;
     try {
       const res = await admin.graphql(
-        `query EditTargetStatus($id: ID!) { draftOrder(id: $id) { id name status } }`,
+        `query EditTargetStatus($id: ID!) {
+          draftOrder(id: $id) {
+            id
+            name
+            status
+            order { id cancelledAt displayFulfillmentStatus }
+          }
+        }`,
         { variables: { id: gid } }
       );
       const body = await res.json();
       const target = body.data?.draftOrder;
-      if (!target || target.status === "COMPLETED") {
+      if (!target) {
         return json(
-          {
-            error: `Order ${target?.name ?? row.orderName} has already been paid or processed and can no longer be edited.`,
-            edit_expired: true,
-          },
+          { error: "The order you were editing can't be found.", edit_expired: true },
           { status: 422 }
         );
       }
-      editTarget = { rowId: row.id, gid, name: target.name };
+      if (target.status === "COMPLETED") {
+        const order = target.order;
+        if (!order || order.cancelledAt || order.displayFulfillmentStatus === "FULFILLED") {
+          return json(
+            {
+              error: `Order ${target.name} has ${order?.cancelledAt ? "been cancelled" : "already shipped"} and can no longer be edited.`,
+              edit_expired: true,
+            },
+            { status: 422 }
+          );
+        }
+        editTarget = { rowId: row.id, gid, name: target.name, orderGid: order.id };
+      } else {
+        editTarget = { rowId: row.id, gid, name: target.name, orderGid: null };
+      }
     } catch (err) {
       console.error("[app-proxy/linesheet-order] edit-target lookup failed:", err);
       return json({ error: "Could not verify the order being edited — please try again." }, { status: 502 });
@@ -1469,6 +1525,242 @@ async function handleLinesheetOrder(request: Request, url: URL) {
         },
         { status: 422 }
       );
+    }
+
+    // ── Paid/queued order: additions & increases only, via the Order Edit
+    // API (same machinery as Admin's "Edit order"). Removals/decreases mean
+    // refunds — human territory. Committing leaves an outstanding balance
+    // the customer pays via PAY BALANCE on the Orders page.
+    if (editTarget.orderGid) {
+      let calcId: string | null = null;
+      const currentByVariant = new Map<string, { id: string; quantity: number }>();
+      try {
+        const res = await admin.graphql(
+          `#graphql
+          mutation BeginOrderEdit($id: ID!) {
+            orderEditBegin(id: $id) {
+              calculatedOrder {
+                id
+                lineItems(first: 250) {
+                  nodes { id quantity variant { id } }
+                }
+              }
+              userErrors { field message }
+            }
+          }`,
+          { variables: { id: editTarget.orderGid } }
+        );
+        const body = await res.json();
+        const errors = body.data?.orderEditBegin?.userErrors ?? [];
+        if (errors.length > 0) throw new Error(JSON.stringify(errors));
+        const calc = body.data?.orderEditBegin?.calculatedOrder;
+        calcId = calc?.id ?? null;
+        for (const n of calc?.lineItems?.nodes ?? []) {
+          const variantNum = n.variant?.id ? String(n.variant.id.split("/").pop()) : null;
+          if (variantNum) currentByVariant.set(variantNum, { id: n.id, quantity: n.quantity });
+        }
+      } catch (err) {
+        console.error("[app-proxy/linesheet-order] orderEditBegin failed:", err);
+      }
+      if (!calcId) {
+        return json({ error: "Could not open the order for editing — please try again." }, { status: 502 });
+      }
+
+      // Diff desired lines against the order's current lines.
+      const decreases: string[] = [];
+      const additions: Array<(typeof lineItems)[number]> = [];
+      const increases: Array<{ calcLineId: string; qty: number; item: (typeof lineItems)[number] }> = [];
+      const desiredVariants = new Set<string>();
+      for (const l of lineItems) {
+        const variantNum = String(l.input.variantId).split("/").pop()!;
+        desiredVariants.add(variantNum);
+        const cur = currentByVariant.get(variantNum);
+        if (!cur) additions.push(l);
+        else if (l.input.quantity > cur.quantity) {
+          increases.push({ calcLineId: cur.id, qty: l.input.quantity, item: l });
+        } else if (l.input.quantity < cur.quantity) decreases.push(l.label);
+      }
+      const removedCount = [...currentByVariant.keys()].filter(
+        (v) => !desiredVariants.has(v)
+      ).length;
+      if (decreases.length > 0 || removedCount > 0) {
+        return json(
+          {
+            error:
+              "Items can't be removed or reduced on an order that's already been paid — " +
+              "add items freely, but for reductions contact us and we'll sort out the refund.",
+          },
+          { status: 422 }
+        );
+      }
+      if (additions.length === 0 && increases.length === 0) {
+        return json({ error: "No changes to submit — quantities match the order." }, { status: 422 });
+      }
+      // An order edit can't change shipping, so freight-priced items (which
+      // need a shipping re-quote) stay off paid orders.
+      const freightChanged = [...additions, ...increases.map((i) => i.item)].filter(
+        (l) => l.noFreeShipping
+      );
+      if (freightChanged.length > 0) {
+        return json(
+          {
+            error:
+              "Freight-priced items can't be added to a paid order (shipping must be quoted): " +
+              freightChanged.map((l) => l.label).join(", ") +
+              ". Order them on a new sheet instead.",
+          },
+          { status: 422 }
+        );
+      }
+
+      // Apply the changes; nothing touches the real order until commit.
+      try {
+        for (const inc of increases) {
+          const res = await admin.graphql(
+            `#graphql
+            mutation EditSetQty($id: ID!, $lineItemId: ID!, $quantity: Int!) {
+              orderEditSetQuantity(id: $id, lineItemId: $lineItemId, quantity: $quantity) {
+                calculatedOrder { id }
+                userErrors { field message }
+              }
+            }`,
+            { variables: { id: calcId, lineItemId: inc.calcLineId, quantity: inc.qty } }
+          );
+          const body = await res.json();
+          const errs = body.data?.orderEditSetQuantity?.userErrors ?? [];
+          if (errs.length > 0) throw new Error(JSON.stringify(errs));
+        }
+        for (const add of additions) {
+          const res = await admin.graphql(
+            `#graphql
+            mutation EditAddVariant($id: ID!, $variantId: ID!, $quantity: Int!) {
+              orderEditAddVariant(id: $id, variantId: $variantId, quantity: $quantity, allowDuplicates: false) {
+                calculatedLineItem { id }
+                userErrors { field message }
+              }
+            }`,
+            {
+              variables: {
+                id: calcId,
+                variantId: add.input.variantId,
+                quantity: add.input.quantity,
+              },
+            }
+          );
+          const body = await res.json();
+          const errs = body.data?.orderEditAddVariant?.userErrors ?? [];
+          if (errs.length > 0) throw new Error(JSON.stringify(errs));
+          const newLineId = body.data?.orderEditAddVariant?.calculatedLineItem?.id;
+          const pct = add.input.appliedDiscount?.value ?? 0;
+          if (newLineId && pct > 0) {
+            const dres = await admin.graphql(
+              `#graphql
+              mutation EditAddDiscount($id: ID!, $lineItemId: ID!, $discount: OrderEditAppliedDiscountInput!) {
+                orderEditAddLineItemDiscount(id: $id, lineItemId: $lineItemId, discount: $discount) {
+                  calculatedOrder { id }
+                  userErrors { field message }
+                }
+              }`,
+              {
+                variables: {
+                  id: calcId,
+                  lineItemId: newLineId,
+                  discount: { percentValue: pct, description: "Wholesale" },
+                },
+              }
+            );
+            const dbody = await dres.json();
+            const derrs = dbody.data?.orderEditAddLineItemDiscount?.userErrors ?? [];
+            if (derrs.length > 0) throw new Error(JSON.stringify(derrs));
+          }
+        }
+        const cres = await admin.graphql(
+          `#graphql
+          mutation CommitOrderEdit($id: ID!) {
+            orderEditCommit(id: $id, notifyCustomer: true, staffNote: "Customer added items via the wholesale line sheet.") {
+              order { id name }
+              userErrors { field message }
+            }
+          }`,
+          { variables: { id: calcId } }
+        );
+        const cbody = await cres.json();
+        const cerrs = cbody.data?.orderEditCommit?.userErrors ?? [];
+        if (cerrs.length > 0) throw new Error(JSON.stringify(cerrs));
+      } catch (err) {
+        console.error("[app-proxy/linesheet-order] order edit failed:", err);
+        return json(
+          { error: "Could not update the order — no changes were applied. Please try again or contact us." },
+          { status: 502 }
+        );
+      }
+
+      // Sync our records; the edit session is finished.
+      await db.wholesaleOrder.update({
+        where: { id: editTarget.rowId },
+        data: {
+          totalAmount: subtotalCents,
+          discountPercent:
+            retailSubtotalCents > 0
+              ? Math.round((1 - subtotalCents / retailSubtotalCents) * 100)
+              : 0,
+        },
+      });
+      await db.linesheetDraft.updateMany({
+        where: {
+          shopifyCustomerId: wholesaleSession.shopifyCustomerId,
+          status: "SUBMITTED",
+          shopifyDraftOrderId: editOfDraftOrderId,
+        },
+        data: {
+          lines: JSON.stringify(
+            lines.map((l) => ({ variant_id: Number(l.variantId), quantity: l.quantity }))
+          ),
+          subtotalCents,
+        },
+      });
+      await db.linesheetDraft.deleteMany({
+        where: { shopifyCustomerId: wholesaleSession.shopifyCustomerId, status: "EDITING" },
+      });
+
+      // Fresh balance for the response (best effort — the Orders page derives
+      // it independently either way).
+      let balanceDueCents = 0;
+      let payBalanceUrl: string | null = null;
+      try {
+        const bres = await admin.graphql(
+          `query OrderBalance($id: ID!) {
+            order(id: $id) {
+              totalOutstandingSet { shopMoney { amount } }
+              paymentCollectionDetails { additionalPaymentCollectionUrl }
+            }
+          }`,
+          { variables: { id: editTarget.orderGid } }
+        );
+        const bbody = await bres.json();
+        const o = bbody.data?.order;
+        balanceDueCents = Math.round(
+          parseFloat(o?.totalOutstandingSet?.shopMoney?.amount ?? "0") * 100
+        );
+        payBalanceUrl =
+          balanceDueCents > 0
+            ? o?.paymentCollectionDetails?.additionalPaymentCollectionUrl ?? null
+            : null;
+      } catch (err) {
+        console.error("[app-proxy/linesheet-order] balance lookup failed:", err);
+      }
+
+      return proxyJson({
+        ok: true,
+        edited: true,
+        order_edit: true,
+        order_name: editTarget.name,
+        subtotal_cents: subtotalCents,
+        balance_due_cents: balanceDueCents,
+        pay_balance_url: payBalanceUrl,
+        item_count: lineItems.length,
+        payment_terms: wholesaleSession.paymentTerms,
+      });
     }
 
     // Mirrors createDraft's input for a payable stock order.

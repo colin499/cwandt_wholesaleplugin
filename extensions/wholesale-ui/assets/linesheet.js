@@ -651,8 +651,12 @@
     banner.id = "wh-ls-edit-banner";
     banner.className = "wh-ls-order-result wh-ls-order-result--success";
     banner.appendChild(document.createTextNode(
-      "Editing order " + (ctx.name || "") + " — submitting updates that order in place. " +
-      "Your draft sheet is untouched. "
+      ctx.paid
+        ? "Adding to order " + (ctx.name || "") + " — it's already paid, so you can add items " +
+          "or increase quantities (for reductions, contact us). Any balance due is payable " +
+          "from Order History. Your draft sheet is untouched. "
+        : "Editing order " + (ctx.name || "") + " — submitting updates that order in place. " +
+          "Your draft sheet is untouched. "
     ));
     var cancel = document.createElement("a");
     cancel.href = "#";
