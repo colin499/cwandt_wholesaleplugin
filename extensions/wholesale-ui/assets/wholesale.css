@@ -173,6 +173,23 @@
 }
 
 /* --------------------------------------------------------------------------
+   Header linesheet icon — replaces the theme cart button for wholesale
+   customers (inserted by wholesale.js 9b into .header__cart)
+   -------------------------------------------------------------------------- */
+.wh-header-linesheet {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.wh-header-linesheet img {
+  display: block;
+  height: 22px;
+  width: auto;
+}
+
+/* --------------------------------------------------------------------------
    Print / line sheet styles
    Applied to the line sheet page only — not injected globally.
    -------------------------------------------------------------------------- */

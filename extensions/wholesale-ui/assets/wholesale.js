@@ -323,6 +323,23 @@
   });
 
   /* -------------------------------------------------------------------------
+     9b. Header cart button → line sheet icon
+         The wholesale-global embed hides the theme's header cart link (CSS,
+         server-side, wholesale customers only) and renders a <template> with
+         the linesheet icon link; this inserts it where the cart button was.
+         Same selector on both sides: if the theme header changes, the hide
+         and the insert fail together and the cart button simply returns.
+     ---------------------------------------------------------------------- */
+
+  function installHeaderLinesheetIcon() {
+    var tpl = document.getElementById("wh-header-linesheet-tpl");
+    var cartLink = document.querySelector(".header__cart .custom-cart-icon");
+    if (!tpl || !tpl.content || !cartLink) return;
+    if (document.querySelector(".wh-header-linesheet")) return; // idempotent
+    cartLink.parentNode.insertBefore(tpl.content.cloneNode(true), cartLink);
+  }
+
+  /* -------------------------------------------------------------------------
      10. Main init
      ---------------------------------------------------------------------- */
 
@@ -377,6 +394,7 @@
         });
         return;
       }
+      installHeaderLinesheetIcon();  // header cart → linesheet icon
       runWholesaleUI();    // product-page price block
     });
   }
