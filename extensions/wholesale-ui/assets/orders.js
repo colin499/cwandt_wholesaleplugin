@@ -98,30 +98,46 @@
   // True when the customer's draft sheet has items on it (set by renderList).
   var hasDraftItems = false;
 
-  // ACTIONS column: the one thing the customer can do next with this order.
+  // Linesheet page URL (set in init from the block's data attribute).
+  var sheetUrl = "/pages/linesheet";
+
+  // ACTIONS column: primary action (or note) first, then EDIT while the
+  // order is still editable. Editing ends the moment the draft becomes a
+  // real Shopify order (payment, or net-terms auto-queue) — from PREPARING
+  // on, the only action is Reorder.
   function actionsHTML(o) {
     if (o.status === "DRAFT") {
       return (
         '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-ls-btn--cart wh-orders-submit"' +
-        ' data-order-id="' + esc(o.id) + '">Submit order</button>'
+        ' data-order-id="' + esc(o.id) + '">Submit order</button>' +
+        '<a class="wh-ls-btn wh-ls-btn--small wh-orders-action-2" href="' + esc(sheetUrl) + '">Edit</a>'
       );
     }
     if (o.status === "SUBMITTED" || o.status === "INVOICE_SENT") {
+      var html;
       if (o.invoice_url) {
-        return (
+        html =
           '<a class="wh-ls-btn wh-ls-btn--small wh-ls-btn--cart" href="' + esc(o.invoice_url) +
-          '" target="_blank" rel="noopener">Make payment</a>'
-        );
+          '" target="_blank" rel="noopener">Make payment</a>';
+      } else {
+        html =
+          '<span class="wh-orders-note">' +
+          (o.freight_quote
+            ? "Freight quote pending"
+            : o.backorder
+              ? "Invoiced when stock ships"
+              : "Awaiting invoice") +
+          "</span>";
       }
-      return (
-        '<span class="wh-orders-note">' +
-        (o.freight_quote
-          ? "Freight quote pending"
-          : o.backorder
-            ? "Invoiced when stock ships"
-            : "Awaiting invoice") +
-        "</span>"
-      );
+      if (o.draft_order_id) {
+        html +=
+          '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-orders-edit wh-orders-action-2"' +
+          ' data-order-id="' + esc(o.id) + '"' +
+          ' data-draft-order-id="' + esc(o.draft_order_id) + '"' +
+          ' data-order-name="' + esc(o.order_name) + '"' +
+          ' title="Reopen this order on the sheet — reviewing and submitting replaces it">Edit</button>';
+      }
+      return html;
     }
     if (o.status === "PREPARING" || o.status === "PARTIALLY_SHIPPED" || o.status === "SHIPPED" || o.status === "CANCELLED" || o.status === "REFUNDED") {
       return (
@@ -174,11 +190,10 @@
      Expandable order detail
      ---------------------------------------------------------------------- */
 
-  // Detail header: plain-language explanation of the status (left) plus the
-  // one action that isn't already in the row's ACTIONS column (right).
-  // Submit / Make payment / Reorder live ONLY in the ACTIONS column — the row
-  // stays visible above the expanded detail, so never repeat them here.
-  function buildDetailHTML(order, linesheetUrl) {
+  // Detail header: purely informational — plain-language status explanation
+  // plus tracking links. ALL actions (Submit / Make payment / Edit / Reorder)
+  // live in the row's ACTIONS column, which stays visible above the detail.
+  function buildDetailHTML(order) {
     var html = '<div class="wh-orders-detail-head">';
     html += '<span class="wh-orders-tip">' + esc(statusTip(order));
     (order.tracking || []).forEach(function (t) {
@@ -194,17 +209,6 @@
         : " · " + esc(label);
     });
     html += "</span>";
-    if (order.status === "DRAFT") {
-      html +=
-        '<a class="wh-ls-btn wh-ls-btn--small" href="' + esc(linesheetUrl) + '">Edit draft</a>';
-    } else if (order.draft_order_id && (order.status === "SUBMITTED" || order.status === "INVOICE_SENT")) {
-      html +=
-        '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-orders-edit"' +
-        ' data-order-id="' + esc(order.id) + '"' +
-        ' data-draft-order-id="' + esc(order.draft_order_id) + '"' +
-        ' data-order-name="' + esc(order.order_name) + '"' +
-        ' title="Reopen this order on the sheet — reviewing and submitting replaces it">Edit order</button>';
-    }
     html += "</div>";
 
     html += '<table class="wh-ls-table wh-orders-detail-table"><thead><tr>';
@@ -239,7 +243,7 @@
     return html;
   }
 
-  function toggleDetail(row, linesheetUrl) {
+  function toggleDetail(row) {
     var next = row.nextElementSibling;
     if (next && next.classList.contains("wh-orders-detail")) {
       next.remove();
@@ -266,7 +270,7 @@
       })
       .then(function (data) {
         if (!data || !data.order) throw new Error("Bad response");
-        cell.innerHTML = buildDetailHTML(data.order, linesheetUrl);
+        cell.innerHTML = buildDetailHTML(data.order);
       })
       .catch(function (err) {
         cell.innerHTML = '<p class="wh-ls-error">Unable to load this order. Please try again.</p>';
@@ -476,6 +480,7 @@
     if (!root || !content) return;
 
     var linesheetUrl = root.getAttribute("data-linesheet-url") || "/pages/linesheet";
+    sheetUrl = linesheetUrl; // module-level: actionsHTML builds the Edit link from it
 
     // Result banner for submit feedback, above the table.
     var resultEl = document.createElement("div");
@@ -499,7 +504,7 @@
           content.removeAttribute("hidden");
           if (openDraft) {
             var draftRow = content.querySelector('.wh-orders-row[data-status="DRAFT"]');
-            if (draftRow) toggleDetail(draftRow, linesheetUrl);
+            if (draftRow) toggleDetail(draftRow);
           }
         })
         .catch(function (err) {
@@ -531,10 +536,10 @@
         reorder(reorderBtn, linesheetUrl);
         return;
       }
-      // Links inside the detail (tracking / invoice / edit-on-sheet) behave normally.
+      // Links (tracking / Make payment / Edit-draft) behave normally.
       if (e.target && e.target.closest && e.target.closest("a")) return;
       var row = e.target && e.target.closest ? e.target.closest(".wh-orders-row") : null;
-      if (row) toggleDetail(row, linesheetUrl);
+      if (row) toggleDetail(row);
     });
 
     content.addEventListener("keydown", function (e) {
@@ -544,7 +549,7 @@
         : null;
       if (row) {
         e.preventDefault();
-        toggleDetail(row, linesheetUrl);
+        toggleDetail(row);
       }
     });
   }

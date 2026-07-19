@@ -661,3 +661,8 @@
   color: blue;
   opacity: 1;
 }
+
+/* Secondary EDIT action sits after the primary action/note */
+.wh-orders-action-2 {
+  margin-left: 6px;
+}
