@@ -29,9 +29,9 @@
 
   var SK_STATUS = "wh_status";    // "1" | "0"
   var SK_PRICES = "wh_prices6_";  // + productId → {t, data} (v6: moq_exempt + real MOQs)
-  // Cache lifetime — server-side changes (MOQ exemption, CMS prices) must
-  // reach an open browser session within minutes. Mirrors linesheet.js.
-  var PRICES_TTL_MS = 10 * 60 * 1000;
+  // Cache lifetime — just long enough for rapid page-hopping; admin-side
+  // changes should survive at most one reload. Mirrors linesheet.js.
+  var PRICES_TTL_MS = 60 * 1000;
 
   // Wholesale UI is desktop/tablet-only (>= 750px): on phones a logged-in
   // wholesaler browses the RETAIL site normally (prices, cart, no banner) —

@@ -18,10 +18,10 @@
 
   var SK_STATUS    = "wh_status";
   var SK_LINESHEET = "wh_linesheet_v7"; // versioned key — bump if cache shape changes (v7: moq_exempt + real MOQs)
-  // Cache lifetime: server-side changes (MOQ exemption, CMS prices, program
-  // membership) must reach an already-open browser session within minutes,
-  // not "whenever the tab closes".
-  var LINESHEET_TTL_MS = 10 * 60 * 1000;
+  // Cache lifetime: just long enough to make rapid page-hopping instant.
+  // Anything longer makes admin-side changes (MOQ exemption, prices, program
+  // membership) look broken — a change should survive at most one reload.
+  var LINESHEET_TTL_MS = 60 * 1000;
 
   /* -------------------------------------------------------------------------
      Wholesale status check (mirrors wholesale.js — synchronous)
