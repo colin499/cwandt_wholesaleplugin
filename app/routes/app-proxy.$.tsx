@@ -463,7 +463,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           currency_code: shopCurrency,
           available: v.availableForSale,
           in_stock: v.inventoryQuantity ?? 0,
-          moq: session.exemptFromMoq ? 1 : state.moq,
+          // Real MOQ even for exempt customers — they see it (informational,
+          // with a courtesy note) but nothing enforces it (moq_exempt flag).
+          moq: state.moq,
           case_size: state.caseSize,
           image_url: v.image?.url ?? null, // per-variant image; falls back to product image client-side
         }];
@@ -486,6 +488,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
     return proxyJson({
       wholesale: true,
+      moq_exempt: session.exemptFromMoq,
       collections: [{ title: "", products: flatProducts }],
     });
   }
@@ -566,7 +569,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         discount_percent: state.discountPercent,
         available: v.availableForSale,
         in_stock: v.inventoryQuantity ?? 0,
-        moq: session.exemptFromMoq ? 1 : state.moq,
+        // Real MOQ even for exempt customers — display only (moq_exempt flag
+        // suppresses the qty-input enforcement client-side).
+        moq: state.moq,
         case_size: state.caseSize,
         selected_options: v.selectedOptions,
         image_url: v.image?.url ?? null,
@@ -576,6 +581,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
     return proxyJson({
       wholesale: true,
+      moq_exempt: session.exemptFromMoq,
       product_wholesale: variants.length > 0,
       product_id: productId,
       product_title: productData.title,

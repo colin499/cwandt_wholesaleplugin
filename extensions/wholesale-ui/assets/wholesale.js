@@ -28,7 +28,7 @@
   window.__whWholesaleInit = true;
 
   var SK_STATUS = "wh_status";    // "1" | "0"
-  var SK_PRICES = "wh_prices5_";  // + productId → {t, data} (v5: TTL wrapper)
+  var SK_PRICES = "wh_prices6_";  // + productId → {t, data} (v6: moq_exempt + real MOQs)
   // Cache lifetime — server-side changes (MOQ exemption, CMS prices) must
   // reach an open browser session within minutes. Mirrors linesheet.js.
   var PRICES_TTL_MS = 10 * 60 * 1000;
@@ -132,6 +132,10 @@
      4. Price block updater — fills in variant prices and shows the block
      ---------------------------------------------------------------------- */
 
+  // MOQ-exempt customers see real MOQs (informational) but the qty input is
+  // never floored to them. Set from the prices response.
+  var whMoqExempt = false;
+
   function applyVariantPrice(variantsData, selectedVariantId, productForm) {
     var block    = document.getElementById("wh-price-block");
     var skeleton = document.querySelector(".wh-price-skeleton"); // sibling of the block, not a child
@@ -216,7 +220,7 @@
     // self-disables for them.) The cart page can still lower quantities —
     // this is the PDP path only; hard enforcement lives where the app creates
     // orders (the orderable linesheet).
-    applyMoqToQuantityInput(productForm, variant.moq);
+    applyMoqToQuantityInput(productForm, whMoqExempt ? 1 : variant.moq);
 
     var isOutOfStock = !variant.available || variant.in_stock <= 0;
 
@@ -391,6 +395,7 @@
           return;
         }
 
+        whMoqExempt = !!data.moq_exempt;
         var selectedId = getSelectedVariantId(productForm);
         applyVariantPrice(data.variants, selectedId, productForm);
         watchVariantChanges(productForm, data.variants);

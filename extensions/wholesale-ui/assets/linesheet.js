@@ -17,7 +17,7 @@
   "use strict";
 
   var SK_STATUS    = "wh_status";
-  var SK_LINESHEET = "wh_linesheet_v6"; // versioned key — bump if cache shape changes (v6: {t, data} TTL wrapper)
+  var SK_LINESHEET = "wh_linesheet_v7"; // versioned key — bump if cache shape changes (v7: moq_exempt + real MOQs)
   // Cache lifetime: server-side changes (MOQ exemption, CMS prices, program
   // membership) must reach an already-open browser session within minutes,
   // not "whenever the tab closes".
@@ -111,6 +111,10 @@
   // True when the current customer sees distributor pricing (server sends
   // dist_price only to distributor accounts). Set from response data.
   var hasDistPricing = false;
+
+  // MOQ-exempt customers still SEE real MOQs (informational, with a courtesy
+  // note at the top of the sheet) but nothing blocks below-MOQ quantities.
+  var moqExempt = false;
 
   function buildQtyInputHTML(variant) {
     // Numeric input; 0 = not ordering, otherwise the server enforces MOQ
@@ -475,8 +479,17 @@
     lines.forEach(function (l) {
       subtotal += l.price * l.quantity;
       units += l.quantity;
-      l.input.classList.toggle("wh-ls-qty--below-moq", l.quantity < l.moq);
-      if (l.quantity < l.moq) moqShort.push(l);
+      var below = !moqExempt && l.quantity < l.moq;
+      l.input.classList.toggle("wh-ls-qty--below-moq", below);
+      if (below) moqShort.push(l);
+    });
+
+    // Rows with a quantity entered get the lightyellow "in your order" tint.
+    content.querySelectorAll(".wh-ls-qty-input").forEach(function (input) {
+      var row = input.closest("tr");
+      if (row) {
+        row.classList.toggle("wh-ls-row--filled", (parseInt(input.value, 10) || 0) > 0);
+      }
     });
 
     if (lines.length === 0) {
@@ -708,7 +721,7 @@
       showOrderResult(resultEl, false, "Enter quantities before reviewing your order.");
       return;
     }
-    var short = lines.filter(function (l) { return l.quantity < l.moq; });
+    var short = moqExempt ? [] : lines.filter(function (l) { return l.quantity < l.moq; });
     if (short.length > 0) {
       showOrderResult(
         resultEl, false,
@@ -926,8 +939,12 @@
       }
 
       lastData = data;
+      moqExempt = !!data.moq_exempt;
       rebuildVariantProductMap(data);
-      content.innerHTML = buildHTML(data);
+      content.innerHTML =
+        (moqExempt
+          ? '<p class="wh-ls-moq-note">Although it is not required for your account, please meet MOQ where possible.</p>'
+          : "") + buildHTML(data);
       content.removeAttribute("hidden");
       wireSorting(content);
       updateSummary(content, summaryEl); // show the zeroed totals immediately

@@ -82,7 +82,6 @@
   font-size: 12px;
   line-height: 17px;
   text-align: left;
-  margin-left: auto; /* stays right-aligned now that the heading is gone */
   /* Panel sits at the right edge; this width pulls its LEFT edge out to
      line up with the PRINT button below (leftmost of the right-aligned
      action row). Tune this number if button labels change. */
@@ -217,6 +216,20 @@
 #wh-linesheet-content .wh-ls-table tbody tr:hover td,
 #wh-linesheet-content .wh-ls-table tbody tr:focus-within td {
   background: #f3f3f3;
+}
+
+/* Rows with a quantity entered — later rule, so it wins over hover/focus */
+#wh-linesheet-content .wh-ls-table tbody tr.wh-ls-row--filled td {
+  background: lightyellow;
+}
+
+/* Courtesy note shown to MOQ-exempt customers above the table */
+.wh-ls-moq-note {
+  margin: 0 0 10px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-style: italic;
 }
 
 .wh-ls-sortable {
@@ -473,7 +486,7 @@
 .wh-orders-row--draft td,
 .wh-orders-row--draft:hover td,
 .wh-orders-create-row td {
-  background: yellow;
+  background: lightyellow;
 }
 
 .wh-orders-create-row td {
