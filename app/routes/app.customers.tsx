@@ -7,7 +7,6 @@ import {
   Card,
   IndexTable,
   Text,
-  Badge,
   BlockStack,
   InlineStack,
   Button,
@@ -172,76 +171,55 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
-  // ── Row updates ───────────────────────────────────────────────────────────
-  const customerId = String(formData.get("customerId"));
-  const customer = await db.wholesaleCustomer.findUnique({ where: { id: customerId } });
-  if (!customer) return json({ error: "Customer not found" }, { status: 404 });
+  // ── Row update (whole row saved at once) ─────────────────────────────────
+  if (intent === "update_row") {
+    const customerId = String(formData.get("customerId"));
+    const customer = await db.wholesaleCustomer.findUnique({ where: { id: customerId } });
+    if (!customer) return json({ error: "Customer not found" }, { status: 404 });
 
-  if (intent === "update_status") {
-    const newStatus = String(formData.get("status"));
-    if (!["APPROVED", "PENDING", "SUSPENDED", "REJECTED"].includes(newStatus)) {
-      return json({ error: "Invalid status" }, { status: 400 });
-    }
-    await db.wholesaleCustomer.update({
-      where: { id: customerId },
-      data: {
-        status: newStatus,
-        approvedAt: newStatus === "APPROVED" ? new Date() : undefined,
-      },
-    });
-  }
-
-  if (intent === "update_type") {
     const newType = String(formData.get("customerType"));
     if (!CUSTOMER_TYPES.some((t) => t.value === newType)) {
       return json({ error: "Invalid customer type" }, { status: 400 });
     }
-    // A type change re-points the account at that type's default profile.
-    // A per-customer discount override, if any, survives the change.
+    const newStatus = String(formData.get("status"));
+    if (!["APPROVED", "PENDING", "SUSPENDED", "REJECTED"].includes(newStatus)) {
+      return json({ error: "Invalid status" }, { status: 400 });
+    }
+    const newTerms = String(formData.get("paymentTerms"));
+    if (!PAYMENT_TERMS.some((t) => t.value === newTerms)) {
+      return json({ error: "Invalid payment terms" }, { status: 400 });
+    }
+    const rawMin = String(formData.get("minimumOrderValue") ?? "").trim();
+    const parsedMin = rawMin === "" ? null : parseFloat(rawMin);
+    const minimumOrderValue =
+      parsedMin === null || isNaN(parsedMin) || parsedMin < 0 ? null : parsedMin;
+
     await db.wholesaleCustomer.update({
       where: { id: customerId },
       data: {
         customerType: newType,
-        pricingProfileId: defaultProfileIdForType(newType),
+        // A type change re-points the account at that type's default profile.
+        // A per-customer discount override, if any, survives the change.
+        ...(newType !== customer.customerType
+          ? { pricingProfileId: defaultProfileIdForType(newType) }
+          : {}),
+        status: newStatus,
+        approvedAt:
+          newStatus === "APPROVED" && customer.status !== "APPROVED" ? new Date() : undefined,
+        paymentTerms: newTerms,
+        minimumOrderValue,
+        exemptFromMoq: String(formData.get("exemptFromMoq")) === "true",
+        taxExempt: String(formData.get("taxExempt")) === "true",
       },
     });
+
+    // Every row mutation re-projects tags + metafields from the updated row.
+    await syncCustomerToShopify(admin, customer.shopifyCustomerId);
+
+    return json({ ok: true });
   }
 
-  if (intent === "update_tax_exempt") {
-    await db.wholesaleCustomer.update({
-      where: { id: customerId },
-      data: { taxExempt: String(formData.get("taxExempt")) === "true" },
-    });
-  }
-
-  if (intent === "update_moq_exempt") {
-    await db.wholesaleCustomer.update({
-      where: { id: customerId },
-      data: { exemptFromMoq: String(formData.get("exemptFromMoq")) === "true" },
-    });
-  }
-
-  if (intent === "update_minimum") {
-    const raw = String(formData.get("minimumOrderValue") ?? "").trim();
-    const parsed = raw === "" ? null : parseFloat(raw);
-    const minimumOrderValue = parsed === null || isNaN(parsed) || parsed < 0 ? null : parsed;
-    await db.wholesaleCustomer.update({
-      where: { id: customerId },
-      data: { minimumOrderValue },
-    });
-  }
-
-  // Every row mutation re-projects tags + metafields from the updated row.
-  await syncCustomerToShopify(admin, customer.shopifyCustomerId);
-
-  return json({ ok: true });
-};
-
-const statusTone: Record<string, "success" | "attention" | "critical" | "info"> = {
-  APPROVED: "success",
-  PENDING: "attention",
-  REJECTED: "critical",
-  SUSPENDED: "info",
+  return json({ error: "Unknown intent" }, { status: 400 });
 };
 
 type CustomerRowData = {
@@ -261,19 +239,46 @@ type CustomerRowData = {
   profileName: string | null;
 };
 
+const STATUS_OPTIONS = [
+  { label: "Approved", value: "APPROVED" },
+  { label: "Pending", value: "PENDING" },
+  { label: "Suspended", value: "SUSPENDED" },
+  { label: "Rejected", value: "REJECTED" },
+];
+
 function CustomerRow({ customer, index }: { customer: CustomerRowData; index: number }) {
-  const statusFetcher = useFetcher();
-  const typeFetcher = useFetcher();
-  const minFetcher = useFetcher();
-  const moqFetcher = useFetcher();
+  const fetcher = useFetcher();
+  const [status, setStatus] = useState(customer.status);
+  const [type, setType] = useState(customer.customerType);
+  const [terms, setTerms] = useState(customer.paymentTerms);
   const [moqExempt, setMoqExempt] = useState(customer.exemptFromMoq);
-  const taxFetcher = useFetcher();
   const [taxExempt, setTaxExempt] = useState(customer.taxExempt);
-  const [selectedStatus, setSelectedStatus] = useState(customer.status);
-  const [selectedType, setSelectedType] = useState(customer.customerType);
-  const [minValue, setMinValue] = useState(
-    customer.minimumOrderValue != null ? String(customer.minimumOrderValue) : ""
-  );
+  const savedMin = customer.minimumOrderValue != null ? String(customer.minimumOrderValue) : "";
+  const [minValue, setMinValue] = useState(savedMin);
+
+  const dirty =
+    status !== customer.status ||
+    type !== customer.customerType ||
+    terms !== customer.paymentTerms ||
+    moqExempt !== customer.exemptFromMoq ||
+    taxExempt !== customer.taxExempt ||
+    minValue.trim() !== savedMin;
+
+  const saving = fetcher.state !== "idle";
+  const save = () =>
+    fetcher.submit(
+      {
+        intent: "update_row",
+        customerId: customer.id,
+        customerType: type,
+        status,
+        paymentTerms: terms,
+        minimumOrderValue: minValue.trim(),
+        exemptFromMoq: String(moqExempt),
+        taxExempt: String(taxExempt),
+      },
+      { method: "post" }
+    );
 
   const displayName =
     customer.company ||
@@ -287,68 +292,64 @@ function CustomerRow({ customer, index }: { customer: CustomerRowData; index: nu
       </IndexTable.Cell>
       <IndexTable.Cell>{customer.email}</IndexTable.Cell>
       <IndexTable.Cell>
-        <typeFetcher.Form method="post">
-          <input type="hidden" name="intent" value="update_type" />
-          <input type="hidden" name="customerId" value={customer.id} />
-          <BlockStack gap="200" inlineAlign="start">
-            <Select
-              label=""
-              labelHidden
-              name="customerType"
-              options={CUSTOMER_TYPES}
-              value={selectedType}
-              onChange={setSelectedType}
-            />
-            {selectedType !== customer.customerType && (
-              <Button submit size="slim" loading={typeFetcher.state !== "idle"}>Save</Button>
-            )}
-          </BlockStack>
-        </typeFetcher.Form>
+        <Select
+          label=""
+          labelHidden
+          options={CUSTOMER_TYPES}
+          value={type}
+          onChange={setType}
+          disabled={saving}
+        />
       </IndexTable.Cell>
       <IndexTable.Cell>
-        <Badge tone={statusTone[customer.status] ?? "info"}>{customer.status}</Badge>
+        <Select
+          label=""
+          labelHidden
+          options={STATUS_OPTIONS}
+          value={status}
+          onChange={setStatus}
+          disabled={saving}
+        />
       </IndexTable.Cell>
       <IndexTable.Cell>
         <Text as="span">
-          {customer.effectiveDiscount}%{" "}
-          <Text as="span" tone="subdued" variant="bodySm">
-            {customer.hasDiscountOverride ? "(override)" : `(${customer.profileName ?? "profile"})`}
-          </Text>
+          {customer.effectiveDiscount}%
+          {customer.hasDiscountOverride && (
+            <Text as="span" tone="subdued" variant="bodySm">
+              {" "}(override)
+            </Text>
+          )}
         </Text>
       </IndexTable.Cell>
-      <IndexTable.Cell>{customer.paymentTerms.replace("_", " ")}</IndexTable.Cell>
       <IndexTable.Cell>
-        <minFetcher.Form method="post">
-          <input type="hidden" name="intent" value="update_minimum" />
-          <input type="hidden" name="customerId" value={customer.id} />
-          <BlockStack gap="200" inlineAlign="start">
-            <TextField
-              label=""
-              labelHidden
-              autoComplete="off"
-              prefix="$"
-              placeholder="Default"
-              value={minValue}
-              onChange={setMinValue}
-              name="minimumOrderValue"
-            />
-            <Button submit size="slim" loading={minFetcher.state !== "idle"}>Save</Button>
-          </BlockStack>
-        </minFetcher.Form>
+        <Select
+          label=""
+          labelHidden
+          options={PAYMENT_TERMS}
+          value={terms}
+          onChange={setTerms}
+          disabled={saving}
+        />
+      </IndexTable.Cell>
+      <IndexTable.Cell>
+        <TextField
+          label=""
+          labelHidden
+          autoComplete="off"
+          prefix="$"
+          placeholder="Default"
+          value={minValue}
+          onChange={setMinValue}
+          disabled={saving}
+        />
       </IndexTable.Cell>
       <IndexTable.Cell>
         <Checkbox
           label=""
           labelHidden
           checked={moqExempt}
-          disabled={moqFetcher.state !== "idle"}
-          onChange={(checked) => {
-            setMoqExempt(checked);
-            moqFetcher.submit(
-              { intent: "update_moq_exempt", customerId: customer.id, exemptFromMoq: String(checked) },
-              { method: "post" }
-            );
-          }}
+          disabled={saving}
+          onChange={setMoqExempt}
         />
       </IndexTable.Cell>
       <IndexTable.Cell>
@@ -356,37 +357,20 @@ function CustomerRow({ customer, index }: { customer: CustomerRowData; index: nu
           label=""
           labelHidden
           checked={taxExempt}
-          disabled={taxFetcher.state !== "idle"}
-          onChange={(checked) => {
-            setTaxExempt(checked);
-            taxFetcher.submit(
-              { intent: "update_tax_exempt", customerId: customer.id, taxExempt: String(checked) },
-              { method: "post" }
-            );
-          }}
+          disabled={saving}
+          onChange={setTaxExempt}
         />
       </IndexTable.Cell>
       <IndexTable.Cell>
-        <statusFetcher.Form method="post">
-          <input type="hidden" name="intent" value="update_status" />
-          <input type="hidden" name="customerId" value={customer.id} />
-          <BlockStack gap="200" inlineAlign="start">
-            <Select
-              label=""
-              labelHidden
-              name="status"
-              options={[
-                { label: "Approved", value: "APPROVED" },
-                { label: "Pending", value: "PENDING" },
-                { label: "Suspended", value: "SUSPENDED" },
-                { label: "Rejected", value: "REJECTED" },
-              ]}
-              value={selectedStatus}
-              onChange={setSelectedStatus}
-            />
-            <Button submit size="slim" loading={statusFetcher.state !== "idle"}>Save</Button>
-          </BlockStack>
-        </statusFetcher.Form>
+        <Button
+          size="slim"
+          variant="primary"
+          disabled={!dirty}
+          loading={saving}
+          onClick={save}
+        >
+          Save
+        </Button>
       </IndexTable.Cell>
     </IndexTable.Row>
   );
@@ -655,7 +639,7 @@ export default function CustomersPage() {
                 { title: "Min. Order" },
                 { title: "MOQ Exempt" },
                 { title: "Tax Exempt" },
-                { title: "Actions" },
+                { title: "" },
               ]}
               selectable={false}
             >
