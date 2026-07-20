@@ -26,8 +26,13 @@
   text-transform: uppercase;
 }
 
-@media (max-width: 749.98px) {
+@media screen and (max-width: 749.98px) {
   .wh-linesheet > :not(.wh-mobile-note) {
+    display: none !important;
+  }
+
+  /* The totals bar lives outside .wh-linesheet — hide it separately */
+  .wh-ls-sticky {
     display: none !important;
   }
 
@@ -351,9 +356,13 @@
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 10px 0;
-  margin-bottom: 16px;
+  padding: 10px 20px;
+  /* Full-bleed: break out of the centered page container to span the viewport */
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
   background: #fff;
+  border-bottom: 1px solid #000;
+  color: #000;
   flex-wrap: wrap;
 }
 
@@ -371,6 +380,17 @@
 
 .wh-ls-save-state:empty {
   display: none;
+}
+
+/* Colon separator between the draft status and the totals readout —
+   negative margin trims the flex gap so spacing matches the " : " within
+   the summary text. */
+.wh-ls-save-state:not(:empty) {
+  margin-right: -10px;
+}
+
+.wh-ls-save-state:not(:empty)::after {
+  content: " :";
 }
 
 /* --------------------------------------------------------------------------
@@ -686,6 +706,13 @@
 .wh-pdf-mode .wh-print-only-title { display: block; }
 .wh-pdf-mode .wh-ls-col-qty { display: none; }
 .wh-pdf-mode { padding: 0; }
+
+/* Detail line titles link to the variant PDP — plain-text look, pointer only */
+.wh-orders-line-link {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
 
 /* Orders page — ACTIONS column and inline notes */
 .wh-orders-actions { white-space: nowrap; }

@@ -29,6 +29,30 @@
   {% comment %} html2pdf.js loaded from CDN for PDF export {% endcomment %}
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" defer></script>
 
+  {% comment %}
+    Live totals bar — sits OUTSIDE the padded .wh-linesheet shell so it can
+    run flush under the site header, full-bleed. Sticks below the header
+    while the sheet scrolls; counts and subtotal update as quantities
+    change; submit lives here.
+  {% endcomment %}
+  <div class="wh-ls-sticky wh-no-print">
+      <span id="wh-ls-save-state" class="wh-ls-save-state" aria-live="polite"></span>
+      <span id="wh-ls-summary" class="wh-ls-summary"></span>
+      <div class="wh-ls-sticky-actions">
+        <button type="button" class="wh-ls-btn" id="wh-ls-clear" title="Set every quantity back to zero">Clear Sheet</button>
+        <button type="button" class="wh-ls-btn" id="wh-ls-print">Print</button>
+        <div class="wh-ls-export-wrap">
+          <button type="button" class="wh-ls-btn" id="wh-ls-export" aria-haspopup="true" aria-expanded="false">Export &#9662;</button>
+          <div class="wh-ls-export-menu" id="wh-ls-export-menu" hidden>
+            <button type="button" class="wh-ls-export-item" data-export="csv">Download CSV</button>
+            <button type="button" class="wh-ls-export-item" data-export="pdf">Download PDF</button>
+            <button type="button" class="wh-ls-export-item" data-export="gsheet">Open in Google Sheets</button>
+          </div>
+        </div>
+        <button type="button" class="wh-ls-btn wh-ls-btn--cart" id="wh-ls-submit-order" data-orders-url="{{ block.settings.orders_url | default: '/pages/orders' }}">Review Wholesale Order &rarr;</button>
+      </div>
+  </div>
+
   <div class="wh-linesheet">
 
     {% comment %} Phones: wholesale is desktop-only — everything else in this
@@ -68,28 +92,6 @@
     </div>
 
     {% comment %}
-      Live totals bar — sticks below the site header while the sheet scrolls.
-      Counts and subtotal update as quantities change; submit lives here.
-    {% endcomment %}
-    <div class="wh-ls-sticky wh-no-print">
-      <span id="wh-ls-save-state" class="wh-ls-save-state" aria-live="polite"></span>
-      <span id="wh-ls-summary" class="wh-ls-summary"></span>
-      <div class="wh-ls-sticky-actions">
-        <button type="button" class="wh-ls-btn" id="wh-ls-clear" title="Set every quantity back to zero">Clear Sheet</button>
-        <button type="button" class="wh-ls-btn" id="wh-ls-print">Print</button>
-        <div class="wh-ls-export-wrap">
-          <button type="button" class="wh-ls-btn" id="wh-ls-export" aria-haspopup="true" aria-expanded="false">Export &#9662;</button>
-          <div class="wh-ls-export-menu" id="wh-ls-export-menu" hidden>
-            <button type="button" class="wh-ls-export-item" data-export="csv">Download CSV</button>
-            <button type="button" class="wh-ls-export-item" data-export="pdf">Download PDF</button>
-            <button type="button" class="wh-ls-export-item" data-export="gsheet">Open in Google Sheets</button>
-          </div>
-        </div>
-        <button type="button" class="wh-ls-btn wh-ls-btn--cart" id="wh-ls-submit-order" data-orders-url="{{ block.settings.orders_url | default: '/pages/orders' }}">Review Wholesale Order &rarr;</button>
-      </div>
-    </div>
-
-    {% comment %}
       Print/PDF header — hidden on screen, shown when printing or exporting.
       Right-column values are mirrored from the live sheet by linesheet.js.
     {% endcomment %}
@@ -116,11 +118,6 @@
 
     <div id="wh-linesheet-content" hidden></div>
 
-    {% comment %} Order history lives on its own page (wholesale-orders block) {% endcomment %}
-    <p class="wh-ls-orders-link wh-no-print">
-      <a href="{{ block.settings.orders_url | default: '/pages/orders' }}">Previous orders &rarr;</a>
-    </p>
-
   </div>
 
 {% else %}
@@ -141,7 +138,7 @@
     {
       "type": "text",
       "id": "orders_url",
-      "label": "Orders page URL (Previous orders link)",
+      "label": "Orders page URL (Review Order hand-off)",
       "default": "/pages/orders"
     },
     {

@@ -807,6 +807,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
               sku: node?.sku ?? "",
               image_url: node?.image?.url ?? node?.product?.featuredImage?.url ?? null,
               unit_price_cents: unitPriceCents,
+              product_url: node?.product?.handle
+                ? `/products/${node.product.handle}?variant=${l.variant_id}`
+                : null,
             };
           }),
         },

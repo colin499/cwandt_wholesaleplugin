@@ -404,8 +404,8 @@
           resultEl,
           copied,
           copied
-            ? "Linesheet copied to clipboard — paste (⌘V) into the new Google Sheet."
-            : "Could not copy automatically — use Download CSV and import it into Google Sheets."
+            ? "Linesheet copied to clipboard, paste (⌘V) into the new Google Sheet."
+            : "Could not copy automatically, use Download CSV and import it into Google Sheets."
         );
       }
     };
@@ -493,7 +493,7 @@
     });
 
     if (lines.length === 0) {
-      summaryEl.textContent = "0 PRODUCTS · 0 VARIANTS · 0 ITEMS · " + formatMoney(0);
+      summaryEl.textContent = "0 PRODUCTS : 0 VARIANTS : 0 ITEMS : " + formatMoney(0);
       setText("wh-ls-print-summary", summaryEl.textContent);
       return;
     }
@@ -503,15 +503,15 @@
 
     var text =
       productCount + " PRODUCT" + (productCount === 1 ? "" : "S") +
-      " · " + lines.length + " VARIANT" + (lines.length === 1 ? "" : "S") +
-      " · " + units + " ITEM" + (units === 1 ? "" : "S") +
-      " · " + formatMoney(subtotal);
+      " : " + lines.length + " VARIANT" + (lines.length === 1 ? "" : "S") +
+      " : " + units + " ITEM" + (units === 1 ? "" : "S") +
+      " : " + formatMoney(subtotal);
     // Print summary shows the clean totals (MOQ/minimum notes are screen-only).
     setText("wh-ls-print-summary", text);
     if (moqShort.length > 0) {
-      text += " — " + moqShort.length + " item" + (moqShort.length === 1 ? "" : "s") + " below MOQ";
+      text += " : " + moqShort.length + " item" + (moqShort.length === 1 ? "" : "s") + " below MOQ";
     } else if (orderMinimumCents !== null && subtotal < orderMinimumCents) {
-      text += " — minimum " + formatMoney(orderMinimumCents);
+      text += " : minimum " + formatMoney(orderMinimumCents);
     }
     summaryEl.textContent = text;
   }
@@ -574,7 +574,7 @@
         setSaveState("Draft saved");
       })
       .catch(function (err) {
-        setSaveState("Draft not saved — check connection");
+        setSaveState("Draft not saved, check connection");
         console.error("[linesheet] draft save error:", err);
       });
   }
@@ -671,11 +671,11 @@
     banner.className = "wh-ls-order-result wh-ls-order-result--success";
     banner.appendChild(document.createTextNode(
       ctx.paid
-        ? "Adding to order " + (ctx.name || "") + " — it's already paid, so you can add items " +
+        ? "Adding to order " + (ctx.name || "") + ". Since it's already paid, you can add items " +
           "or increase quantities (for reductions, contact us). Any balance due is payable " +
-          "from Order History. Your draft sheet is untouched. "
-        : "Editing order " + (ctx.name || "") + " — submitting updates that order in place. " +
-          "Your draft sheet is untouched. "
+          "from Order History."
+        : "Editing order " + (ctx.name || "") + ". Submitting updates that order in place. "
+        
     ));
     var cancel = document.createElement("a");
     cancel.href = "#";
@@ -725,7 +725,7 @@
     if (short.length > 0) {
       showOrderResult(
         resultEl, false,
-        "Some quantities are below the minimum order quantity — highlighted in the Qty column."
+        "Some quantities are below the minimum order quantity. See highlights in Qty column."
       );
       return;
     }
@@ -850,7 +850,7 @@
 
   function downloadPDF(btn) {
     if (typeof html2pdf === "undefined") {
-      alert("PDF export is loading — please try again in a moment.");
+      alert("PDF export is loading, please try again in a moment.");
       return;
     }
 
@@ -943,7 +943,7 @@
       rebuildVariantProductMap(data);
       content.innerHTML =
         (moqExempt
-          ? '<p class="wh-ls-moq-note">Although it is not required for your account, please meet MOQ where possible.</p>'
+          ? '<p class="wh-ls-moq-note">Although it is not required for your account, please try to meet MOQ where possible.</p>'
           : "") + buildHTML(data);
       content.removeAttribute("hidden");
       wireSorting(content);

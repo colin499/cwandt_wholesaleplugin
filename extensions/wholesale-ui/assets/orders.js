@@ -26,11 +26,11 @@
   // Plain-language explanation shown when an order is expanded. One sentence,
   // no status jargon — the STATUS column already names the state.
   var STATUS_TIP = {
-    DRAFT: "Your order is in draft mode. CW&T can't see it until you submit it.",
-    SUBMITTED: "CW&T has received your order. Pay the invoice when you're ready and we'll start preparing your shipment. Items will be reserved for 24 hours.",
+    DRAFT: "Your order is in draft mode. CW&T won't see it until you submit.",
+    SUBMITTED: "CW&T has received your order. Pay the invoice when you're ready and we'll prepare for shipment. Items will be reserved for 24 hours.",
     INVOICE_SENT: "We've emailed your invoice. Once it's paid we'll start preparing your shipment.",
-    PREPARING: "Your order is confirmed and we're getting it ready to ship.",
-    PARTIALLY_SHIPPED: "Part of this order is on its way. The rest ships as soon as it's ready.",
+    PREPARING: "Your order is confirmed and we're preparing to ship.",
+    PARTIALLY_SHIPPED: "Part of this order is on its way. The rest ships when it's ready.",
     SHIPPED: "Your order is on its way.",
     CANCELLED: "This order was cancelled. If that's unexpected, please get in touch.",
     REFUNDED: "This order was returned and refunded.",
@@ -41,14 +41,14 @@
   function statusTip(order) {
     if (order.status === "SUBMITTED" || order.status === "INVOICE_SENT") {
       if (order.freight_quote) {
-        return "This order includes freight-priced items — we'll email your invoice once shipping is quoted.";
+        return "This order includes items that require a shipping quote, we'll email your invoice once shipping is quoted.";
       }
       if (order.backorder) {
-        return "Everything on this order is on backorder — we'll send your invoice when stock arrives and it's ready to ship.";
+        return "Everything on this order is on backorder. We'll send your invoice when stock arrives and is ready to ship.";
       }
     }
     if (order.status === "PREPARING" && order.balance_due_cents > 0) {
-      return "Items were added to this order — pay the remaining balance of " +
+      return "Items were added to this order. Please pay the remaining balance of " +
         formatMoney(order.balance_due_cents) + " and we'll ship everything together.";
     }
     return STATUS_TIP[order.status] || "";
@@ -159,7 +159,7 @@
       return (
         '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-orders-reorder"' +
         ' data-order-id="' + esc(o.id) + '"' +
-        ' title="Start a new order sheet with these quantities">Reorder</button>'
+        ' title="Create a new draft order with these quantities">Reorder</button>'
       );
     }
     return "";
@@ -231,10 +231,16 @@
     html += "</tr></thead><tbody>";
     order.lines.forEach(function (l) {
       var unit = l.unit_price_cents;
+      // Line titles link to the variant's PDP in a new tab (plain-text look).
+      var link = function (text) {
+        return l.product_url
+          ? '<a href="' + esc(l.product_url) + '" target="_blank" rel="noopener" class="wh-orders-line-link">' + text + "</a>"
+          : text;
+      };
       html +=
         "<tr>" +
-        "<td>" + esc(l.product_title) + "</td>" +
-        "<td>" + esc(l.variant_title || "—") + "</td>" +
+        "<td>" + link(esc(l.product_title)) + "</td>" +
+        "<td>" + link(esc(l.variant_title || "—")) + "</td>" +
         "<td>" + esc(l.sku || "—") + "</td>" +
         "<td>" + l.quantity + "</td>" +
         "<td>" + (unit === null ? "—" : formatMoney(unit)) + "</td>" +
@@ -372,23 +378,23 @@
     if (data.all_backorder) {
       msg = "Backorder " + (data.order_name || "") + " submitted (" +
         formatMoney(data.subtotal_cents) + "). Everything on this order is " +
-        "currently out of stock — we'll send your invoice when it's ready to ship.";
+        "currently out of stock. We'll send your invoice when it's ready to ship.";
     } else {
       msg = "Order " + (data.order_name || "") + " submitted (" +
         formatMoney(data.subtotal_cents) + ")." +
         (data.payment_terms === "NET_30" ? " Payment terms: Net 30." :
          data.payment_terms === "NET_60" ? " Payment terms: Net 60." : "");
       if (data.order_queued) {
-        msg += " It's headed to our fulfillment queue — we'll invoice per your terms.";
+        msg += " It's headed to our fulfillment queue. We'll invoice per your terms.";
       }
       if (data.backorder_name) {
         msg += " " + data.backorder_count + " out-of-stock item" +
           (data.backorder_count === 1 ? " is" : "s are") +
           " on separate backorder " + data.backorder_name +
-          " — we'll invoice that when it ships.";
+          ". We'll invoice that when it is ready to ship.";
       }
       if (data.freight_quote) {
-        msg += " This order includes freight-priced items — we'll email your invoice once shipping is quoted.";
+        msg += " This order includes items that require a shipping quote. We'll email your invoice once shipping is quoted.";
       }
     }
     return msg;
