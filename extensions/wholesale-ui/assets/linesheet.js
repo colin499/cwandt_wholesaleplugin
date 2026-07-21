@@ -457,6 +457,34 @@
     });
   }
 
+  // Edit mode: variants on the order being edited show effective stock
+  // (live stock + the order's own reserved units) instead of BACKORDER.
+  function creditEditStock(content, lines) {
+    if (!lastData || !lines) return;
+    var byId = {};
+    (lastData.collections || []).forEach(function (c) {
+      (c.products || []).forEach(function (p) {
+        (p.variants || []).forEach(function (v) { byId[String(v.id)] = v; });
+      });
+    });
+    lines.forEach(function (l) {
+      var v = byId[String(l.variant_id)];
+      if (!v) return;
+      var showsBackorder = !v.available || v.in_stock <= 0;
+      if (!showsBackorder) return;
+      var effective = (v.in_stock || 0) + l.quantity;
+      if (effective <= 0) return;
+      var input = content.querySelector(
+        '.wh-ls-qty-input[data-variant-id="' + l.variant_id + '"]'
+      );
+      var row = input && input.closest ? input.closest("tr") : null;
+      if (!row) return;
+      var cell = row.querySelector(".wh-ls-col-stock");
+      if (cell) cell.textContent = String(effective);
+      row.setAttribute("data-stock", String(effective));
+    });
+  }
+
   var orderMinimumCents = null; // fetched at init; null = unknown
 
   function fetchOrderMinimum() {
@@ -622,6 +650,10 @@
         }
         if (prefill && data.draft) {
           if (data.draft.lines) applyDraftLines(content, data.draft.lines);
+          // Edit mode: the order's own reservation consumed the live stock,
+          // so its items can read BACKORDER on reopen. Credit those units in
+          // the STOCK display (the server applies the same credit on submit).
+          if (ctx && data.draft.lines) creditEditStock(content, data.draft.lines);
           var poEl = document.getElementById("wh-ls-po");
           if (poEl && data.draft.po_number) poEl.value = data.draft.po_number;
           setText("wh-ls-print-po", getPoNumber() || "—");

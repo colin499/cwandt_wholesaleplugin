@@ -1294,8 +1294,17 @@ async function handleLinesheetOrder(request: Request, url: URL) {
   // open draft is updated in place (draftOrderUpdate); a COMPLETED draft
   // whose real order is unshipped goes through the Order Edit API instead
   // (additions only — see the order-edit branch). Shipped/cancelled = no.
-  let editTarget: { rowId: string; gid: string; name: string; orderGid: string | null } | null =
-    null;
+  let editTarget: {
+    rowId: string;
+    gid: string;
+    name: string;
+    orderGid: string | null;
+    // Variant → quantity already on the order being edited. Those units are
+    // reserved/sold to THIS order, so stock checks credit them back —
+    // otherwise a customer who bought the last units sees their own order
+    // flagged as backorder when they reopen it to edit.
+    prevQty: Map<string, number>;
+  } | null = null;
   if (editOfDraftOrderId) {
     const row = await db.wholesaleOrder.findFirst({
       where: {
@@ -1317,7 +1326,13 @@ async function handleLinesheetOrder(request: Request, url: URL) {
             id
             name
             status
-            order { id cancelledAt displayFulfillmentStatus }
+            lineItems(first: 250) { nodes { quantity variant { legacyResourceId } } }
+            order {
+              id
+              cancelledAt
+              displayFulfillmentStatus
+              lineItems(first: 250) { nodes { quantity variant { legacyResourceId } } }
+            }
           }
         }`,
         { variables: { id: gid } }
@@ -1330,6 +1345,14 @@ async function handleLinesheetOrder(request: Request, url: URL) {
           { status: 422 }
         );
       }
+      const prevQtyFrom = (nodes: any[]): Map<string, number> => {
+        const m = new Map<string, number>();
+        for (const n of nodes ?? []) {
+          const id = n?.variant?.legacyResourceId ? String(n.variant.legacyResourceId) : null;
+          if (id) m.set(id, (m.get(id) ?? 0) + (n.quantity ?? 0));
+        }
+        return m;
+      };
       if (target.status === "COMPLETED") {
         const order = target.order;
         if (!order || order.cancelledAt || order.displayFulfillmentStatus === "FULFILLED") {
@@ -1341,9 +1364,21 @@ async function handleLinesheetOrder(request: Request, url: URL) {
             { status: 422 }
           );
         }
-        editTarget = { rowId: row.id, gid, name: target.name, orderGid: order.id };
+        editTarget = {
+          rowId: row.id,
+          gid,
+          name: target.name,
+          orderGid: order.id,
+          prevQty: prevQtyFrom(order.lineItems?.nodes),
+        };
       } else {
-        editTarget = { rowId: row.id, gid, name: target.name, orderGid: null };
+        editTarget = {
+          rowId: row.id,
+          gid,
+          name: target.name,
+          orderGid: null,
+          prevQty: prevQtyFrom(target.lineItems?.nodes),
+        };
       }
     } catch (err) {
       console.error("[app-proxy/linesheet-order] edit-target lookup failed:", err);
@@ -1429,9 +1464,20 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     // Out-of-stock lines split into a SEPARATE backorder draft order —
     // Shopify's invoice checkout strips deny-policy OOS lines at payment
     // time, so they can't ride in the payable order.
-    const isBackorder = !node.availableForSale || (node.inventoryQuantity ?? 0) <= 0;
+    //
+    // Edit mode: quantities already on the order being edited are reserved
+    // FOR that order (the invoice reservation/sale consumed the stock), so
+    // they're credited back — a line is only short if it asks for more than
+    // live stock + its own reservation.
+    const reservedCredit = editTarget?.prevQty.get(line.variantId) ?? 0;
+    const effectiveStock = (node.inventoryQuantity ?? 0) + reservedCredit;
+    const isBackorder = editTarget
+      ? line.quantity > effectiveStock
+      : !node.availableForSale || (node.inventoryQuantity ?? 0) <= 0;
     lineItems.push({
       isBackorder,
+      effectiveStock,
+      requested: line.quantity,
       label,
       noFreeShipping: productHasNoFreeShippingTag(node.product),
       amountCents: state.priceCents * line.quantity,
@@ -1523,14 +1569,18 @@ async function handleLinesheetOrder(request: Request, url: URL) {
   if (editTarget) {
     // Out-of-stock lines can't ride in a payable invoice (Shopify strips
     // deny-policy OOS lines at payment) and an edit has no backorder split.
+    // effectiveStock already credits units the order itself holds, so this
+    // only fires for genuinely unavailable quantities.
     const oos = lineItems.filter((l) => l.isBackorder);
     if (oos.length > 0) {
       return json(
         {
           error:
-            "Out-of-stock items can't be added to an existing order: " +
-            oos.map((l) => l.label).join(", ") +
-            ". Remove them here and order them on a new sheet — they'll ship as a backorder.",
+            "Not enough stock to update the order: " +
+            oos
+              .map((l) => `${l.label} (${Math.max(0, l.effectiveStock)} available, ${l.requested} requested)`)
+              .join(", ") +
+            ". Reduce those quantities, or order the extra units on a new sheet — they'll ship as a backorder.",
         },
         { status: 422 }
       );
