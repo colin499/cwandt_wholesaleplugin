@@ -395,7 +395,12 @@
 
 .wh-ls-sticky--editing .wh-ls-save-state,
 .wh-ls-sticky--editing .wh-ls-summary {
-  font-size: 10px;
+  font-size: 11px;
+}
+
+/* Line labels: black, prefixed via ::before so the JS strings stay clean. */
+.wh-ls-sticky--editing .wh-ls-save-state::before {
+  content: "SUMMARY : ";
 }
 
 .wh-ls-sticky--editing .wh-ls-save-state { grid-column: 1; grid-row: 1; }
@@ -405,23 +410,28 @@
 #wh-ls-edit-banner {
   grid-column: 1 / 3;
   grid-row: 2;
-  font-size: 10px;
-  color: #cc0000;
+  font-size: 11px;
+  color: #0000ee;
+}
+
+#wh-ls-edit-banner::before {
+  content: "NOTES : ";
+  color: #000;
 }
 
 #wh-ls-edit-banner a {
-  color: #cc0000;
+  color: #0000ee;
 }
 
-/* Colon separator between the draft status and the totals readout —
-   negative margin trims the flex gap so spacing matches the " : " within
+/* Pipe separator between the draft status and the totals readout —
+   negative margin trims the flex gap so spacing matches the " | " within
    the summary text. */
 .wh-ls-save-state:not(:empty) {
   margin-right: -10px;
 }
 
 .wh-ls-save-state:not(:empty)::after {
-  content: " :";
+  content: " |";
 }
 
 /* --------------------------------------------------------------------------

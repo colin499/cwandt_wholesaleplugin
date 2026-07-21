@@ -521,7 +521,7 @@
     });
 
     if (lines.length === 0) {
-      summaryEl.textContent = "0 PRODUCTS : 0 VARIANTS : 0 ITEMS : " + formatMoney(0);
+      summaryEl.textContent = "0 PRODUCTS | 0 VARIANTS | 0 ITEMS | " + formatMoney(0);
       setText("wh-ls-print-summary", summaryEl.textContent);
       return;
     }
@@ -531,15 +531,15 @@
 
     var text =
       productCount + " PRODUCT" + (productCount === 1 ? "" : "S") +
-      " : " + lines.length + " VARIANT" + (lines.length === 1 ? "" : "S") +
-      " : " + units + " ITEM" + (units === 1 ? "" : "S") +
-      " : " + formatMoney(subtotal);
+      " | " + lines.length + " VARIANT" + (lines.length === 1 ? "" : "S") +
+      " | " + units + " ITEM" + (units === 1 ? "" : "S") +
+      " | " + formatMoney(subtotal);
     // Print summary shows the clean totals (MOQ/minimum notes are screen-only).
     setText("wh-ls-print-summary", text);
     if (moqShort.length > 0) {
-      text += " : " + moqShort.length + " item" + (moqShort.length === 1 ? "" : "s") + " below MOQ";
+      text += " | " + moqShort.length + " item" + (moqShort.length === 1 ? "" : "s") + " below MOQ";
     } else if (orderMinimumCents !== null && subtotal < orderMinimumCents) {
-      text += " : minimum " + formatMoney(orderMinimumCents);
+      text += " | minimum " + formatMoney(orderMinimumCents);
     }
     summaryEl.textContent = text;
   }
@@ -708,12 +708,13 @@
     bar.classList.add("wh-ls-sticky--editing");
     var banner = document.createElement("div");
     banner.id = "wh-ls-edit-banner";
+    // The "NOTES : " label is a CSS ::before (black); this text renders blue.
     banner.appendChild(document.createTextNode(
       ctx.paid
-        ? "NOTES : Order " + (ctx.name || "") + " is already paid, so you can add items " +
+        ? "Order " + (ctx.name || "") + " is already paid, so you can add items " +
           "or increase quantities (for reductions, contact us). Any balance due is payable " +
           "from Order History. "
-        : "NOTES : Submitting updates that order in place. "
+        : "Submitting updates that order in place. "
     ));
     var cancel = document.createElement("a");
     cancel.href = "#";
