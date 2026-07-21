@@ -693,22 +693,55 @@
     try { sessionStorage.removeItem(EDIT_KEY); } catch (e) { /* ignore */ }
     var banner = document.getElementById("wh-ls-edit-banner");
     if (banner) banner.remove();
+    // Undo the line-1 wrapper: move status + summary back to the bar.
+    var line1 = document.getElementById("wh-ls-edit-line1");
+    if (line1 && line1.parentNode) {
+      var key = document.getElementById("wh-ls-summary-key");
+      if (key) key.remove();
+      while (line1.firstChild) line1.parentNode.insertBefore(line1.firstChild, line1);
+      line1.remove();
+    }
     var bar = document.querySelector(".wh-ls-sticky");
     if (bar) bar.classList.remove("wh-ls-sticky--editing");
   }
 
-  // Edit mode renders as two compact lines in the sticky bar:
-  //   line 1 — EDITING #D1788 : 2 PRODUCTS : … (save-state + summary)
-  //   line 2 — NOTES : how the edit behaves + the cancel link (this banner,
-  //            pushed to its own full-width row by CSS order/flex-basis)
+  // Edit mode renders as two compact labelled lines in the sticky bar:
+  //   SUMMARY : EDITING #D1788 | 2 PRODUCTS | …   (status + totals)
+  //   NOTES : how the edit behaves + cancel link  (blue text)
+  // Labels are fixed-width (9ch, same as the PO # panel's keys) with the
+  // colon carried by the following element, so all three colon columns —
+  // PO # panel, SUMMARY, NOTES — line up.
   function renderEditBanner(summaryEl) {
     var ctx = getEditContext();
     if (!ctx || !summaryEl || !summaryEl.parentNode) return;
     var bar = summaryEl.parentNode;
     bar.classList.add("wh-ls-sticky--editing");
+
+    // Line 1: wrap label + status + totals so they lay out as one flex row.
+    var line1 = document.createElement("div");
+    line1.id = "wh-ls-edit-line1";
+    line1.className = "wh-ls-edit-line1";
+    var key1 = document.createElement("span");
+    key1.id = "wh-ls-summary-key";
+    key1.className = "wh-ls-line-key";
+    key1.textContent = "SUMMARY";
+    line1.appendChild(key1);
+    var saveState = document.getElementById("wh-ls-save-state");
+    if (saveState) line1.appendChild(saveState);
+    line1.appendChild(summaryEl);
+    bar.insertBefore(line1, bar.firstChild);
+
+    // Line 2: NOTES label (black) + colon + blue note text.
     var banner = document.createElement("div");
     banner.id = "wh-ls-edit-banner";
-    // The "NOTES : " label is a CSS ::before (black); this text renders blue.
+    var key2 = document.createElement("span");
+    key2.className = "wh-ls-line-key";
+    key2.textContent = "NOTES";
+    banner.appendChild(key2);
+    var colon = document.createElement("span");
+    colon.className = "wh-ls-line-colon";
+    colon.textContent = ": ";
+    banner.appendChild(colon);
     banner.appendChild(document.createTextNode(
       ctx.paid
         ? "Order " + (ctx.name || "") + " is already paid, so you can add items " +
