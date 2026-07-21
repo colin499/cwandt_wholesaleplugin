@@ -26,9 +26,9 @@
   // Plain-language explanation shown when an order is expanded. One sentence,
   // no status jargon — the STATUS column already names the state.
   var STATUS_TIP = {
-    DRAFT: "Your order is in draft mode. CW&T won't see it until you submit.",
+    DRAFT: "Your order is a draft. CW&T won't see it until you submit.",
     SUBMITTED: "CW&T has received your order. Pay the invoice when you're ready and we'll prepare for shipment. Items will be reserved for 24 hours.",
-    INVOICE_SENT: "We've emailed your invoice. Once it's paid we'll start preparing your shipment.",
+    INVOICE_SENT: "We've emailed your invoice. Once paid we'll start preparing your shipment.",
     PREPARING: "Your order is confirmed and we're preparing to ship.",
     PARTIALLY_SHIPPED: "Part of this order is on its way. The rest ships when it's ready.",
     SHIPPED: "Your order is on its way.",
