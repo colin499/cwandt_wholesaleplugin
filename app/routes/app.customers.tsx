@@ -26,6 +26,7 @@ import {
   backfillFromShopify,
   type BackfillResult,
 } from "../lib/enrollment.server";
+import { getOrderMinimumConfig } from "../lib/wholesale-customer.server";
 
 const CUSTOMER_TYPES = [
   { label: "Wholesale", value: "WHOLESALE" },
@@ -47,6 +48,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     take: 200,
     include: { pricingProfile: true },
   });
+
+  // Per-type profile defaults for the Add Customer form's placeholder text
+  // (override fields show what applies when left blank).
+  const [profiles, minConfig] = await Promise.all([
+    db.pricingProfile.findMany(),
+    getOrderMinimumConfig(),
+  ]);
+  const globalMinimum = minConfig?.minimumOrderValue ?? 500;
+  const profileDefaults = Object.fromEntries(
+    ["WHOLESALE", "DISTRIBUTOR", "B2B"].map((t) => {
+      const p = profiles.find((x) => x.id === defaultProfileIdForType(t));
+      return [
+        t,
+        {
+          discount: p?.discountPercent ?? 50,
+          minimum: p?.minimumOrderValue ?? globalMinimum,
+        },
+      ];
+    })
+  ) as Record<string, { discount: number; minimum: number }>;
 
   // Activity signal: last order date + lifetime order count from Shopify,
   // batched via nodes(). Best-effort — the page still works without it.
@@ -112,7 +133,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return b.enrolledAt.localeCompare(a.enrolledAt);
   });
 
-  return json({ customers });
+  return json({ customers, profileDefaults });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -468,7 +489,11 @@ type SearchResult = {
   enrolled: { customerType: string; status: string } | null;
 };
 
-function AddCustomerCard() {
+function AddCustomerCard({
+  profileDefaults,
+}: {
+  profileDefaults: Record<string, { discount: number; minimum: number }>;
+}) {
   const searchFetcher = useFetcher<{ results?: SearchResult[] }>();
   const enrollFetcher = useFetcher<{ enrolled?: boolean; error?: string }>();
 
@@ -531,42 +556,44 @@ function AddCustomerCard() {
           </div>
           <div style={{ minWidth: 120 }}>
             <TextField
-              label="Discount"
+              label="Discount Override"
               autoComplete="off"
               suffix="%"
               value={discount}
               onChange={setDiscount}
-              placeholder="Profile rate"
+              placeholder={String(profileDefaults[type]?.discount ?? "")}
             />
           </div>
           <div style={{ minWidth: 120 }}>
             <TextField
-              label="Min. Order"
+              label="Min. Order Override"
               autoComplete="off"
               prefix="$"
               value={minVal}
               onChange={setMinVal}
-              placeholder="Default"
+              placeholder={String(profileDefaults[type]?.minimum ?? "")}
             />
           </div>
         </InlineStack>
 
-        <searchFetcher.Form method="post">
-          <input type="hidden" name="intent" value="search" />
-          <InlineStack gap="300" blockAlign="end" wrap={false}>
-            <div style={{ flex: 1 }}>
-              <TextField
-                label="Search your Shopify customers"
-                autoComplete="off"
-                name="q"
-                value={query}
-                onChange={setQuery}
-                placeholder="Name or email"
-              />
-            </div>
-            <Button submit loading={searchFetcher.state !== "idle"}>Search</Button>
-          </InlineStack>
-        </searchFetcher.Form>
+        <div style={{ paddingBottom: 12 }}>
+          <searchFetcher.Form method="post">
+            <input type="hidden" name="intent" value="search" />
+            <InlineStack gap="300" blockAlign="end" wrap={false}>
+              <div style={{ flex: 1 }}>
+                <TextField
+                  label="Search your Shopify customers"
+                  autoComplete="off"
+                  name="q"
+                  value={query}
+                  onChange={setQuery}
+                  placeholder="Name or email"
+                />
+              </div>
+              <Button submit loading={searchFetcher.state !== "idle"}>Search</Button>
+            </InlineStack>
+          </searchFetcher.Form>
+        </div>
 
         {searched && results.length === 0 && (
           <Text as="p" tone="subdued">No matching Shopify customers.</Text>
@@ -693,7 +720,7 @@ function BackfillCard() {
 }
 
 export default function CustomersPage() {
-  const { customers } = useLoaderData<typeof loader>();
+  const { customers, profileDefaults } = useLoaderData<typeof loader>();
   const [tab, setTab] = useState(0);
   const [filter, setFilter] = useState("");
 
@@ -735,7 +762,7 @@ export default function CustomersPage() {
   return (
     <Page title="Customers">
       <BlockStack gap="500">
-        <AddCustomerCard />
+        <AddCustomerCard profileDefaults={profileDefaults} />
 
         <Card padding="0">
           <Tabs tabs={tabs} selected={tab} onSelect={setTab}>
