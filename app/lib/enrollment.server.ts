@@ -63,6 +63,51 @@ type AdminClient = {
   ) => Promise<{ json: () => Promise<any> }>;
 };
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * admin.graphql with backoff on Shopify's cost throttle, returning the parsed
+ * body. Bulk sweeps (backfill) burn API cost faster than it restores —
+ * without this, customer ~60 of a sweep dies with THROTTLED and aborts the
+ * run. Throttling surfaces either as a thrown GraphqlQueryError or as
+ * body.errors[].extensions.code === "THROTTLED" depending on library version,
+ * so both are checked. Non-throttle errors propagate unchanged.
+ */
+async function gqlWithThrottleRetry(
+  admin: AdminClient,
+  query: string,
+  options?: { variables?: Record<string, unknown> }
+): Promise<any> {
+  const MAX_ATTEMPTS = 8;
+  for (let attempt = 0; ; attempt++) {
+    let body: any = null;
+    let thrown: unknown = null;
+    try {
+      const res = await admin.graphql(query, options);
+      body = await res.json();
+    } catch (err) {
+      thrown = err;
+    }
+    const throttled = thrown
+      ? /throttl/i.test(String((thrown as any)?.message ?? thrown))
+      : (body?.errors ?? []).some(
+          (e: any) =>
+            e?.extensions?.code === "THROTTLED" ||
+            /throttl/i.test(String(e?.message ?? ""))
+        );
+    if (!throttled) {
+      if (thrown) throw thrown;
+      return body;
+    }
+    if (attempt >= MAX_ATTEMPTS - 1) {
+      throw thrown instanceof Error
+        ? thrown
+        : new Error("Shopify GraphQL throttled: retries exhausted");
+    }
+    await sleep(500 * 2 ** Math.min(attempt, 4)); // 0.5s → 8s, capped
+  }
+}
+
 /**
  * Pushes the customer's current DB state out to Shopify: managed tags and the
  * wholesale.status / wholesale.minimum_order_value metafields. Call after
@@ -92,11 +137,11 @@ export async function syncCustomerToShopify(
   // stay canonical (readers compare case-insensitively), but removals only
   // match exact casing — target whatever casing the customer actually has.
   const toRemoveLower: string[] = MANAGED_TAGS.filter((t) => !desired.includes(t));
-  const tagsRes = await admin.graphql(
+  const tagsBody = await gqlWithThrottleRetry(
+    admin,
     `query CurrentCustomerTags($id: ID!) { customer(id: $id) { tags } }`,
     { variables: { id: gid } }
   );
-  const tagsBody = await tagsRes.json();
   const currentTags: string[] = tagsBody.data?.customer?.tags ?? [];
   const toRemove = currentTags.filter((t) =>
     toRemoveLower.includes(t.toLowerCase())
@@ -130,9 +175,11 @@ export async function syncCustomerToShopify(
   // Each mutation reports failures via userErrors inside a 200 response —
   // they do NOT throw. Check every one so a denied write can't fail silently.
   const runMutation = async (label: string, query: string, variables: Record<string, unknown>) => {
-    const res = await admin.graphql(query, { variables });
-    const body = await res.json();
-    const payload = body.data?.[Object.keys(body.data ?? {})[0] ?? ""] ?? {};
+    const body = await gqlWithThrottleRetry(admin, query, { variables });
+    if (!body.data) {
+      throw new Error(`${label}: no data in response — ${JSON.stringify(body.errors ?? body)}`);
+    }
+    const payload = body.data[Object.keys(body.data)[0] ?? ""] ?? {};
     const userErrors = payload.userErrors ?? [];
     if (userErrors.length > 0) {
       throw new Error(`${label}: ${userErrors.map((e: any) => e.message).join("; ")}`);
@@ -201,7 +248,8 @@ export async function syncCustomerToShopify(
 
   // No effective minimum → make sure a stale metafield isn't left behind.
   if (effectiveMinimum === null) {
-    const mfRes = await admin.graphql(
+    const mfData = await gqlWithThrottleRetry(
+      admin,
       `query GetMinimumMetafield($id: ID!) {
         customer(id: $id) {
           metafield(namespace: "wholesale", key: "minimum_order_value") { id }
@@ -209,10 +257,10 @@ export async function syncCustomerToShopify(
       }`,
       { variables: { id: gid } }
     );
-    const mfData = await mfRes.json();
     const metafieldId = mfData.data?.customer?.metafield?.id;
     if (metafieldId) {
-      await admin.graphql(
+      await gqlWithThrottleRetry(
+        admin,
         `mutation DeleteMinimumMetafield($input: [ID!]!) {
           metafieldsDelete(metafields: $input) {
             userErrors { field message }
@@ -329,7 +377,8 @@ export async function backfillFromShopify(
   let sweptAllPages = false;
 
   for (let page = 0; page < MAX_PAGES; page++) {
-    const res = await admin.graphql(
+    const data = await gqlWithThrottleRetry(
+      admin,
       `query TaggedCustomers($cursor: String) {
         customers(
           first: 50
@@ -351,7 +400,6 @@ export async function backfillFromShopify(
       }`,
       { variables: { cursor } }
     );
-    const data = await res.json();
     const conn = data.data?.customers;
     if (!conn) break;
 
@@ -394,6 +442,10 @@ export async function backfillFromShopify(
             },
           });
           await syncCustomerToShopify(admin, shopifyCustomerId);
+          // Pace the sweep: each sync costs ~50 API points and Shopify
+          // restores ~100/s — back-to-back syncs drain the bucket by
+          // customer ~60 and THROTTLED aborts the run.
+          await sleep(300);
         }
         continue;
       }
@@ -419,6 +471,7 @@ export async function backfillFromShopify(
         });
         if (!dryRun) {
           await syncCustomerToShopify(admin, shopifyCustomerId);
+          await sleep(300);
         }
       }
     }
