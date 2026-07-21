@@ -382,17 +382,29 @@
   display: none;
 }
 
-/* Edit mode: two compact 10px lines in the sticky bar. Line 1 is the
-   save-state + totals readout; line 2 is the NOTES banner — plain red text,
-   no box, pushed to its own full-width row (order + flex-basis). */
+/* Edit mode: the bar becomes a grid — the readout (line 1) and the NOTES
+   banner (line 2, plain red, no box) stack tight on the left, while the
+   action buttons sit to the right of BOTH lines (row-span). */
+.wh-ls-sticky--editing {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  column-gap: 16px;
+  row-gap: 2px;
+}
+
 .wh-ls-sticky--editing .wh-ls-save-state,
 .wh-ls-sticky--editing .wh-ls-summary {
   font-size: 10px;
 }
 
+.wh-ls-sticky--editing .wh-ls-save-state { grid-column: 1; grid-row: 1; }
+.wh-ls-sticky--editing .wh-ls-summary   { grid-column: 2; grid-row: 1; }
+.wh-ls-sticky--editing .wh-ls-sticky-actions { grid-column: 3; grid-row: 1 / span 2; }
+
 #wh-ls-edit-banner {
-  order: 10;
-  flex-basis: 100%;
+  grid-column: 1 / 3;
+  grid-row: 2;
   font-size: 10px;
   color: #cc0000;
 }
