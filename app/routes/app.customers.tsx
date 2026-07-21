@@ -40,7 +40,7 @@ const PAYMENT_TERMS = [
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { admin } = await authenticate.admin(request);
 
   const rows = await db.wholesaleCustomer.findMany({
     orderBy: { createdAt: "desc" },
@@ -48,23 +48,69 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     include: { pricingProfile: true },
   });
 
-  const customers = rows.map((c) => ({
-    id: c.id,
-    shopifyCustomerId: c.shopifyCustomerId,
-    email: c.email,
-    firstName: c.firstName,
-    lastName: c.lastName,
-    company: c.company,
-    status: c.status,
-    customerType: c.customerType,
-    paymentTerms: c.paymentTerms,
-    minimumOrderValue: c.minimumOrderValue,
-    exemptFromMoq: c.exemptFromMoq,
-    taxExempt: c.taxExempt,
-    effectiveDiscount: resolveDiscountPercent(c),
-    hasDiscountOverride: c.discountPercent !== null,
-    profileName: c.pricingProfile?.name ?? null,
-  }));
+  // Activity signal: last order date + lifetime order count from Shopify,
+  // batched via nodes(). Best-effort — the page still works without it.
+  const activity = new Map<string, { lastOrderAt: string | null; ordersCount: number }>();
+  try {
+    const ids = rows.map((c) => `gid://shopify/Customer/${c.shopifyCustomerId}`);
+    for (let i = 0; i < ids.length; i += 100) {
+      const res = await admin.graphql(
+        `query CustomerActivity($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on Customer {
+              legacyResourceId
+              numberOfOrders
+              lastOrder { createdAt }
+            }
+          }
+        }`,
+        { variables: { ids: ids.slice(i, i + 100) } }
+      );
+      const body = await res.json();
+      for (const n of body.data?.nodes ?? []) {
+        if (!n) continue;
+        activity.set(String(n.legacyResourceId), {
+          lastOrderAt: n.lastOrder?.createdAt ?? null,
+          ordersCount: Number(n.numberOfOrders ?? 0),
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[customers] activity lookup failed:", err);
+  }
+
+  const customers = rows.map((c) => {
+    const act = activity.get(c.shopifyCustomerId);
+    return {
+      id: c.id,
+      shopifyCustomerId: c.shopifyCustomerId,
+      email: c.email,
+      firstName: c.firstName,
+      lastName: c.lastName,
+      company: c.company,
+      status: c.status,
+      customerType: c.customerType,
+      paymentTerms: c.paymentTerms,
+      minimumOrderValue: c.minimumOrderValue,
+      exemptFromMoq: c.exemptFromMoq,
+      taxExempt: c.taxExempt,
+      effectiveDiscount: resolveDiscountPercent(c),
+      hasDiscountOverride: c.discountPercent !== null,
+      profileName: c.pricingProfile?.name ?? null,
+      lastOrderAt: act?.lastOrderAt ?? null,
+      ordersCount: act?.ordersCount ?? 0,
+      enrolledAt: c.createdAt.toISOString(),
+    };
+  });
+
+  // Most recently active first; never-ordered customers sink to the bottom
+  // (newest enrollment first among those).
+  customers.sort((a, b) => {
+    if (a.lastOrderAt && b.lastOrderAt) return b.lastOrderAt.localeCompare(a.lastOrderAt);
+    if (a.lastOrderAt) return -1;
+    if (b.lastOrderAt) return 1;
+    return b.enrolledAt.localeCompare(a.enrolledAt);
+  });
 
   return json({ customers });
 };
@@ -245,7 +291,34 @@ type CustomerRowData = {
   effectiveDiscount: number;
   hasDiscountOverride: boolean;
   profileName: string | null;
+  lastOrderAt: string | null;
+  ordersCount: number;
+  enrolledAt: string;
 };
+
+// ~13 months: a last order older than this renders subdued (reads as stale).
+const STALE_MS = 400 * 24 * 60 * 60 * 1000;
+
+function LastOrderCell({ customer }: { customer: CustomerRowData }) {
+  if (!customer.lastOrderAt) {
+    return (
+      <Text as="span" tone="subdued">
+        never
+      </Text>
+    );
+  }
+  const d = new Date(customer.lastOrderAt);
+  const stale = Date.now() - d.getTime() > STALE_MS;
+  const dateText = d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+  return (
+    <Text as="span" tone={stale ? "subdued" : undefined}>
+      {dateText}
+      <Text as="span" tone="subdued" variant="bodySm">
+        {" "}· {customer.ordersCount} order{customer.ordersCount === 1 ? "" : "s"}
+      </Text>
+    </Text>
+  );
+}
 
 const STATUS_OPTIONS = [
   { label: "Approved", value: "APPROVED" },
@@ -299,6 +372,9 @@ function CustomerRow({ customer, index }: { customer: CustomerRowData; index: nu
         <Text as="span" fontWeight="semibold">{displayName}</Text>
       </IndexTable.Cell>
       <IndexTable.Cell>{customer.email}</IndexTable.Cell>
+      <IndexTable.Cell>
+        <LastOrderCell customer={customer} />
+      </IndexTable.Cell>
       <IndexTable.Cell>
         <Select
           label=""
@@ -619,6 +695,7 @@ function BackfillCard() {
 export default function CustomersPage() {
   const { customers } = useLoaderData<typeof loader>();
   const [tab, setTab] = useState(0);
+  const [filter, setFilter] = useState("");
 
   const tabs = [
     { id: "all", content: `All (${customers.length})`, filter: null as string | null },
@@ -640,9 +717,20 @@ export default function CustomersPage() {
   ];
 
   const activeFilter = tabs[tab].filter;
-  const visible = activeFilter
+  const byType = activeFilter
     ? customers.filter((c) => c.customerType === activeFilter)
     : customers;
+
+  const q = filter.trim().toLowerCase();
+  const visible = q
+    ? byType.filter((c) =>
+        [c.email, c.firstName, c.lastName, c.company]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(q)
+      )
+    : byType;
 
   return (
     <Page title="Customers">
@@ -651,12 +739,25 @@ export default function CustomersPage() {
 
         <Card padding="0">
           <Tabs tabs={tabs} selected={tab} onSelect={setTab}>
+            <div style={{ padding: "12px 16px 0" }}>
+              <TextField
+                label=""
+                labelHidden
+                autoComplete="off"
+                placeholder="Filter customers by name, company, or email"
+                value={filter}
+                onChange={setFilter}
+                clearButton
+                onClearButtonClick={() => setFilter("")}
+              />
+            </div>
             <IndexTable
               resourceName={{ singular: "customer", plural: "customers" }}
               itemCount={visible.length}
               headings={[
                 { title: "Name / Company" },
                 { title: "Email" },
+                { title: "Last Order" },
                 { title: "Type" },
                 { title: "Status" },
                 { title: "Discount" },
