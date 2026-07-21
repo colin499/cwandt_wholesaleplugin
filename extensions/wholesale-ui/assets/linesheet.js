@@ -693,21 +693,27 @@
     try { sessionStorage.removeItem(EDIT_KEY); } catch (e) { /* ignore */ }
     var banner = document.getElementById("wh-ls-edit-banner");
     if (banner) banner.remove();
+    var bar = document.querySelector(".wh-ls-sticky");
+    if (bar) bar.classList.remove("wh-ls-sticky--editing");
   }
 
+  // Edit mode renders as two compact lines in the sticky bar:
+  //   line 1 — EDITING #D1788 : 2 PRODUCTS : … (save-state + summary)
+  //   line 2 — NOTES : how the edit behaves + the cancel link (this banner,
+  //            pushed to its own full-width row by CSS order/flex-basis)
   function renderEditBanner(summaryEl) {
     var ctx = getEditContext();
     if (!ctx || !summaryEl || !summaryEl.parentNode) return;
+    var bar = summaryEl.parentNode;
+    bar.classList.add("wh-ls-sticky--editing");
     var banner = document.createElement("div");
     banner.id = "wh-ls-edit-banner";
-    banner.className = "wh-ls-order-result wh-ls-order-result--success";
     banner.appendChild(document.createTextNode(
       ctx.paid
-        ? "Adding to order " + (ctx.name || "") + ". Since it's already paid, you can add items " +
+        ? "NOTES : Order " + (ctx.name || "") + " is already paid, so you can add items " +
           "or increase quantities (for reductions, contact us). Any balance due is payable " +
-          "from Order History."
-        : "Editing order " + (ctx.name || "") + ". Submitting updates that order in place. "
-        
+          "from Order History. "
+        : "NOTES : Submitting updates that order in place. "
     ));
     var cancel = document.createElement("a");
     cancel.href = "#";
@@ -726,7 +732,7 @@
       );
     });
     banner.appendChild(cancel);
-    summaryEl.parentNode.insertBefore(banner, summaryEl);
+    bar.appendChild(banner);
   }
 
   function showOrderResult(resultEl, ok, message, invoiceUrl) {

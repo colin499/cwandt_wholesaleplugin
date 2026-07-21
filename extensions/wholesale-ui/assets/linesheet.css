@@ -382,6 +382,25 @@
   display: none;
 }
 
+/* Edit mode: two compact 10px lines in the sticky bar. Line 1 is the
+   save-state + totals readout; line 2 is the NOTES banner — plain red text,
+   no box, pushed to its own full-width row (order + flex-basis). */
+.wh-ls-sticky--editing .wh-ls-save-state,
+.wh-ls-sticky--editing .wh-ls-summary {
+  font-size: 10px;
+}
+
+#wh-ls-edit-banner {
+  order: 10;
+  flex-basis: 100%;
+  font-size: 10px;
+  color: #cc0000;
+}
+
+#wh-ls-edit-banner a {
+  color: #cc0000;
+}
+
 /* Colon separator between the draft status and the totals readout —
    negative margin trims the flex gap so spacing matches the " : " within
    the summary text. */
