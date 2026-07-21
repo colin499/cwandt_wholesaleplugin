@@ -124,10 +124,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const customerType = String(formData.get("customerType") ?? "WHOLESALE");
     const rawDiscount = String(formData.get("discountPercent") ?? "").trim();
     const parsedDiscount = rawDiscount === "" ? null : parseFloat(rawDiscount);
-    const discountPercent =
+    let discountPercent =
       parsedDiscount !== null && !isNaN(parsedDiscount)
         ? Math.min(100, Math.max(0, parsedDiscount))
         : null;
+    // Typing the profile's own rate is not an override — store null so the
+    // account follows the profile (and future profile changes).
+    if (discountPercent !== null) {
+      const profile = await db.pricingProfile.findUnique({
+        where: { id: defaultProfileIdForType(customerType) },
+      });
+      if (profile && discountPercent === profile.discountPercent) discountPercent = null;
+    }
     const rawMin = String(formData.get("minimumOrderValue") ?? "").trim();
     const parsedMin = rawMin === "" ? null : parseFloat(rawMin);
     const minimumOrderValue =
@@ -399,6 +407,13 @@ function AddCustomerCard() {
   const searched = searchFetcher.data !== undefined;
   const queryLooksLikeEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(query.trim());
 
+  // One fetcher serves every Add button — spin only the row actually
+  // submitting (matched by email) and disable the rest while it runs.
+  const enrolling = enrollFetcher.state !== "idle";
+  const enrollingEmail = enrolling
+    ? String(enrollFetcher.formData?.get("email") ?? "")
+    : null;
+
   // Shared enrollment settings rendered as hidden inputs in every enroll form.
   const settingsInputs = (
     <>
@@ -503,7 +518,12 @@ function AddCustomerCard() {
                       <input type="hidden" name="email" value={r.email} />
                       <input type="hidden" name="firstName" value={r.firstName ?? ""} />
                       <input type="hidden" name="lastName" value={r.lastName ?? ""} />
-                      <Button submit size="slim" loading={enrollFetcher.state !== "idle"}>
+                      <Button
+                        submit
+                        size="slim"
+                        loading={enrollingEmail === r.email}
+                        disabled={enrolling && enrollingEmail !== r.email}
+                      >
                         Add as {type.toLowerCase()}
                       </Button>
                     </enrollFetcher.Form>
@@ -519,7 +539,12 @@ function AddCustomerCard() {
             {settingsInputs}
             <input type="hidden" name="email" value={query.trim()} />
             <InlineStack gap="200" blockAlign="center">
-              <Button submit size="slim" loading={enrollFetcher.state !== "idle"}>
+              <Button
+                submit
+                size="slim"
+                loading={enrollingEmail === query.trim()}
+                disabled={enrolling && enrollingEmail !== query.trim()}
+              >
                 Create new customer {query.trim()}
               </Button>
               <Text as="span" tone="subdued" variant="bodySm">
