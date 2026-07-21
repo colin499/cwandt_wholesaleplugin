@@ -120,10 +120,13 @@
   // BALANCE link once items were added. From first shipment on: Reorder.
   function actionsHTML(o) {
     if (o.status === "DRAFT") {
+      // wh-orders-draft-link: opening the WORKING DRAFT must first end any
+      // lingering order-edit session, or the sheet hijacks the visit into
+      // "EDITING #D…" mode (stale wh-edit-order + surviving EDITING row).
       return (
         '<button type="button" class="wh-ls-btn wh-ls-btn--small wh-ls-btn--cart wh-orders-submit"' +
         ' data-order-id="' + esc(o.id) + '">Submit order</button>' +
-        '<a class="wh-ls-btn wh-ls-btn--small wh-orders-action-2" href="' + esc(sheetUrl) + '">Edit</a>'
+        '<a class="wh-ls-btn wh-ls-btn--small wh-orders-action-2 wh-orders-draft-link" href="' + esc(sheetUrl) + '">Edit</a>'
       );
     }
     if (o.status === "SUBMITTED" || o.status === "INVOICE_SENT") {
@@ -178,7 +181,7 @@
     if (!hasDraftItems) {
       html +=
         '<tr class="wh-orders-create-row"><td colspan="7">' +
-        '<a class="wh-ls-btn wh-ls-btn--small" href="' + esc(sheetUrl) + '">Create Draft Order</a>' +
+        '<a class="wh-ls-btn wh-ls-btn--small wh-orders-draft-link" href="' + esc(sheetUrl) + '">Create Draft Order</a>' +
         "</td></tr>";
     }
 
@@ -542,6 +545,22 @@
       var reorderBtn = e.target && e.target.closest ? e.target.closest(".wh-orders-reorder") : null;
       if (reorderBtn) {
         reorder(reorderBtn, linesheetUrl);
+        return;
+      }
+      // Working-draft links (Edit draft / Create Draft Order): end any
+      // lingering order-edit session first — otherwise the sheet resumes
+      // "EDITING #D…" instead of opening the draft the user asked for.
+      var draftLink = e.target && e.target.closest ? e.target.closest(".wh-orders-draft-link") : null;
+      if (draftLink) {
+        e.preventDefault();
+        clearEditContext();
+        fetch("/apps/wholesale/linesheet-edit-cancel", {
+          method: "POST",
+          credentials: "same-origin",
+        }).then(
+          function () { window.location.href = draftLink.href; },
+          function () { window.location.href = draftLink.href; }
+        );
         return;
       }
       // Links (tracking / Make payment / Edit-draft) behave normally.
