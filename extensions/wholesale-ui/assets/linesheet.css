@@ -95,7 +95,15 @@
 
 .wh-ls-kv {
   display: flex;
+  align-items: center;
   margin: 0 0 2px;
+}
+
+/* Center the value content (incl. the ": " and any input/checkbox) so the
+   colon sits on the same optical line as the plain-text rows. */
+.wh-ls-val {
+  display: flex;
+  align-items: center;
 }
 
 .wh-ls-key {
@@ -127,6 +135,22 @@
   align-items: center;
   gap: 6px;
   cursor: pointer;
+}
+
+.wh-ls-own-label input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  border: 1px solid #000;
+  border-radius: 0;
+  background: #fff;
+  cursor: pointer;
+}
+
+.wh-ls-own-label input[type="checkbox"]:checked {
+  background: #000;
 }
 
 .wh-ls-btn {
@@ -232,6 +256,12 @@
 /* Rows with a quantity entered — later rule, so it wins over hover/focus */
 #wh-linesheet-content .wh-ls-table tbody tr.wh-ls-row--filled td {
   background: lightyellow;
+}
+
+/* PDP hand-off flash (?focus=handle) — after .wh-ls-row--filled so the
+   brighter highlight wins while active; removed by JS after ~3s. */
+#wh-linesheet-content .wh-ls-table tbody tr.wh-ls-row--focus td {
+  background: #ffe97a;
 }
 
 /* Courtesy note shown to MOQ-exempt customers above the table */
@@ -397,7 +427,7 @@
   grid-template-columns: 1fr auto;
   align-items: center;
   column-gap: 16px;
-  row-gap: 2px;
+  row-gap: 0;
 }
 
 .wh-ls-edit-line1 {

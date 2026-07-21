@@ -102,9 +102,12 @@
       <span class="wh-price-key">STOCK</span><span class="wh-price-val" id="wh-price-stock"></span>
     </p>
     <p class="wh-price-discount-note" id="wh-discount-note"></p>
+    {% comment %} ?focus= makes the sheet scroll to and highlight this
+       product's rows on arrival, so the hand-off reads as "go order THIS
+       item" rather than a bare page change. {% endcomment %}
     <a
       class="wh-linesheet-link"
-      href="{{ block.settings.linesheet_url | default: '/pages/linesheet' }}"
+      href="{{ block.settings.linesheet_url | default: '/pages/linesheet' }}?focus={{ product.handle | url_encode }}"
       target="_blank"
       rel="noopener"
     >Order on Linesheet &rarr;</a>

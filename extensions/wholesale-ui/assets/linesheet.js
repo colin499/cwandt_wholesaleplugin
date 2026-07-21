@@ -485,6 +485,35 @@
     });
   }
 
+  // PDP hand-off: ?focus=<product-handle> scrolls to that product's rows,
+  // flashes them, and focuses the first qty input — "Order on Linesheet"
+  // lands on the item you came from instead of the top of the sheet.
+  function focusRequestedProduct(content) {
+    var handle = null;
+    try {
+      handle = new URLSearchParams(window.location.search).get("focus");
+    } catch (e) { return; }
+    if (!handle) return;
+    var rows = [];
+    content.querySelectorAll(".wh-ls-qty-input[data-variant-id]").forEach(function (input) {
+      if (variantProductMap[input.getAttribute("data-variant-id")] === handle) {
+        var row = input.closest("tr");
+        if (row) rows.push(row);
+      }
+    });
+    if (rows.length === 0) return;
+    rows.forEach(function (r) { r.classList.add("wh-ls-row--focus"); });
+    // Let the sticky bar pin + draft prefill settle before scrolling.
+    setTimeout(function () {
+      rows[0].scrollIntoView({ block: "center", behavior: "smooth" });
+      var qty = rows[0].querySelector(".wh-ls-qty-input");
+      if (qty) qty.focus({ preventScroll: true });
+    }, 150);
+    setTimeout(function () {
+      rows.forEach(function (r) { r.classList.remove("wh-ls-row--focus"); });
+    }, 3000);
+  }
+
   var orderMinimumCents = null; // fetched at init; null = unknown
 
   function fetchOrderMinimum() {
@@ -1020,6 +1049,7 @@
       content.removeAttribute("hidden");
       wireSorting(content);
       updateSummary(content, summaryEl); // show the zeroed totals immediately
+      focusRequestedProduct(content);
 
       // Pin the totals bar just below the site's sticky header.
       var stickyBar = document.querySelector(".wh-ls-sticky");
