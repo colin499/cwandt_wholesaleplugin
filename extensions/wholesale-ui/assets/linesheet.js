@@ -663,9 +663,18 @@
       })
       .then(function (data) {
         // The edit session is gone (cancelled elsewhere / expired) — drop
-        // edit mode and load the normal working draft instead.
+        // edit mode and load the normal working draft instead. Say so:
+        // the edit UI has already flashed on screen (rendered optimistically
+        // from the tab's remembered context), and silently turning into a
+        // regular draft reads as the page breaking.
         if (ctx && data.edit_missing) {
           clearEditContext();
+          showOrderResult(
+            document.getElementById("wh-ls-order-result"),
+            false,
+            "The editing session for " + (ctx.name || "your order") +
+              " has ended (already submitted or cancelled). This sheet is now your regular draft."
+          );
           loadDraft(content, summaryEl, prefill);
           return;
         }
