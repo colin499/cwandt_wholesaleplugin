@@ -285,6 +285,59 @@
   }
 
   /* -------------------------------------------------------------------------
+     Live search filter — hides rows that don't match as the customer types.
+     Matches product title, variant, and SKU; every typed word must match.
+     Display-only: quantities, totals, draft saves, and print/PDF output are
+     never affected (filtered rows un-hide in print and PDF export).
+     ---------------------------------------------------------------------- */
+
+  function wireSearch(content) {
+    var input = document.getElementById("wh-ls-search");
+    if (!input) return;
+    var countEl = document.getElementById("wh-ls-search-count");
+    var rows = Array.prototype.slice.call(content.querySelectorAll(".wh-ls-table tbody tr"));
+    var haystacks = rows.map(function (row) {
+      return (
+        (row.getAttribute("data-product") || "") + " " +
+        (row.getAttribute("data-variant") || "") + " " +
+        (row.getAttribute("data-sku") || "")
+      ).toLowerCase();
+    });
+
+    function apply() {
+      var tokens = input.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      var visible = 0;
+      rows.forEach(function (row, i) {
+        var show = tokens.every(function (t) { return haystacks[i].indexOf(t) !== -1; });
+        row.classList.toggle("wh-ls-row--filtered", !show);
+        if (show) visible++;
+      });
+      // Collections whose rows are all filtered out hide entirely (heading
+      // included). The sheet is one flat section today, but stay grouping-safe.
+      content.querySelectorAll(".wh-ls-collection").forEach(function (section) {
+        section.classList.toggle(
+          "wh-ls-collection--filtered-empty",
+          !section.querySelector("tbody tr:not(.wh-ls-row--filtered)")
+        );
+      });
+      if (countEl) {
+        countEl.textContent =
+          tokens.length === 0 ? "" :
+          visible === 0 ? "No matches" :
+          "Showing " + visible + " of " + rows.length;
+      }
+    }
+
+    input.addEventListener("input", apply);
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && input.value) {
+        input.value = "";
+        apply();
+      }
+    });
+  }
+
+  /* -------------------------------------------------------------------------
      Group collapse/expand + data export (CSV / Google Sheets)
      ---------------------------------------------------------------------- */
 
@@ -1057,6 +1110,7 @@
           : "") + buildHTML(data);
       content.removeAttribute("hidden");
       wireSorting(content);
+      wireSearch(content);
       updateSummary(content, summaryEl); // show the zeroed totals immediately
       focusRequestedProduct(content);
 

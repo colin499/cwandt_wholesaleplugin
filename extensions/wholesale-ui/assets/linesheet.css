@@ -153,6 +153,52 @@
   background: #000;
 }
 
+/* --------------------------------------------------------------------------
+   Live search filter — bottom-right of the header, just above the table.
+   Filtering is screen-only: print and PDF always render the full sheet.
+   -------------------------------------------------------------------------- */
+.wh-ls-search {
+  margin-left: auto;
+  align-self: flex-end;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wh-ls-search-input {
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  border: 1px solid #000;
+  border-radius: 0;
+  padding: 6px 10px;
+  width: 30ch;
+  background: #fff;
+}
+
+.wh-ls-search-input::placeholder {
+  color: #767676;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.wh-ls-search-count {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+@media screen {
+  tr.wh-ls-row--filtered { display: none; }
+  .wh-ls-collection--filtered-empty { display: none; }
+}
+
+/* html2pdf captures on-screen state, so un-hide filtered rows during export
+   (browser print already ignores the screen-scoped rules above). */
+.wh-pdf-mode tr.wh-ls-row--filtered { display: table-row; }
+.wh-pdf-mode .wh-ls-collection--filtered-empty { display: block; }
+
 .wh-ls-btn {
   display: inline-block;
   text-decoration: none; /* "Make payment" / "Edit draft" are <a> elements */

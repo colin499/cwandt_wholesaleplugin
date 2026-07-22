@@ -89,6 +89,15 @@
           <span class="wh-ls-key">SHIPPING</span><span class="wh-ls-val"><label class="wh-ls-own-label"><input type="checkbox" id="wh-ls-own-label"> I&rsquo;ll provide my own label</label></span>
         </p>
       </div>
+
+      {% comment %} Live filter — narrows the sheet as you type (display only;
+         quantities, totals, and the saved draft are never affected). {% endcomment %}
+      <div class="wh-ls-search">
+        <span id="wh-ls-search-count" class="wh-ls-search-count" aria-live="polite"></span>
+        <input type="search" id="wh-ls-search" class="wh-ls-search-input"
+               placeholder="Search products" autocomplete="off" spellcheck="false"
+               aria-label="Filter line sheet products">
+      </div>
     </div>
 
     {% comment %}
