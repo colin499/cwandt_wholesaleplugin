@@ -86,7 +86,8 @@
       <span class="wh-price-key">MSRP</span><span class="wh-price-val" id="wh-price-msrp"></span>
     </p>
     <p class="wh-price-row">
-      <span class="wh-price-key">WHOLESALE</span><span class="wh-price-val" id="wh-price-amount" aria-live="polite">—</span>
+      {%- comment -%} Label swaps to B2B for B2B accounts (wholesale.js) {%- endcomment -%}
+      <span class="wh-price-key" id="wh-price-key-label">WHOLESALE</span><span class="wh-price-val" id="wh-price-amount" aria-live="polite">—</span>
     </p>
     {%- comment -%} Shown only to distributor accounts (their effective price) {%- endcomment -%}
     <p class="wh-price-row" id="wh-row-dist" hidden>

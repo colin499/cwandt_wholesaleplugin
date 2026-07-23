@@ -28,7 +28,7 @@
   window.__whWholesaleInit = true;
 
   var SK_STATUS = "wh_status";    // "1" | "0"
-  var SK_PRICES = "wh_prices6_";  // + productId → {t, data} (v6: moq_exempt + real MOQs)
+  var SK_PRICES = "wh_prices7_";  // + productId → {t, data} (v7: customer_type for B2B label)
   // Cache lifetime — just long enough for rapid page-hopping; admin-side
   // changes should survive at most one reload. Mirrors linesheet.js.
   var PRICES_TTL_MS = 60 * 1000;
@@ -396,6 +396,12 @@
         }
 
         whMoqExempt = !!data.moq_exempt;
+        // B2B accounts get their own tier name over the price — the server
+        // prices wh_price at retail minus the B2B profile discount.
+        if (data.customer_type === "B2B") {
+          var keyLabel = document.getElementById("wh-price-key-label");
+          if (keyLabel) keyLabel.textContent = "B2B";
+        }
         var selectedId = getSelectedVariantId(productForm);
         applyVariantPrice(data.variants, selectedId, productForm);
         watchVariantChanges(productForm, data.variants);

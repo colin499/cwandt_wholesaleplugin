@@ -275,6 +275,14 @@ export type VariantWholesaleState =
 /**
  * Resolves a single variant's wholesale state from data the caller already
  * has in hand. discountPercent is derived (retail vs CMS price) for display.
+ *
+ * Price by customer type:
+ *   WHOLESALE   → CMS wholesale price
+ *   DISTRIBUTOR → CMS distributor price
+ *   B2B         → retail minus the customer's resolved discount percent
+ *                 (override ?? B2B pricing profile) — the CMS has no B2B
+ *                 tier; the profile IS the B2B price. Curation still
+ *                 gates availability: no CMS row means not in the program.
  */
 export function resolveVariantWholesale(opts: {
   cms: CmsCachedVariant | undefined;
@@ -283,13 +291,21 @@ export function resolveVariantWholesale(opts: {
   productActive: boolean;
   customerType: string;
   retailCents: number;
+  customerDiscountPercent?: number; // required for B2B; ignored otherwise
 }): VariantWholesaleState {
-  const { cms, variantId, hiddenVariantIds, productActive, customerType, retailCents } = opts;
+  const {
+    cms, variantId, hiddenVariantIds, productActive, customerType, retailCents,
+    customerDiscountPercent,
+  } = opts;
   if (!cms || !productActive || hiddenVariantIds.has(String(variantId))) {
     return { available: false };
   }
   const priceCents =
-    customerType === "DISTRIBUTOR" ? cms.distributorPriceCents : cms.wholesalePriceCents;
+    customerType === "DISTRIBUTOR"
+      ? cms.distributorPriceCents
+      : customerType === "B2B" && customerDiscountPercent != null
+        ? Math.round(retailCents * (1 - customerDiscountPercent / 100))
+        : cms.wholesalePriceCents;
   const discountPercent =
     retailCents > 0 ? Math.round((1 - priceCents / retailCents) * 100) : 0;
   return { available: true, priceCents, moq: cms.moq, caseSize: cms.caseSize, discountPercent };

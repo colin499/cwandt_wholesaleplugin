@@ -445,6 +445,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           hiddenVariantIds: hiddenIds,
           productActive,
           customerType: session.customerType,
+          customerDiscountPercent: session.discountPercent,
           retailCents,
         });
         if (!state.available) return [];
@@ -553,6 +554,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         hiddenVariantIds: hiddenIds,
         productActive,
         customerType: session.customerType,
+        customerDiscountPercent: session.discountPercent,
         retailCents,
       });
       if (!state.available) return [];
@@ -584,6 +586,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     return proxyJson({
       wholesale: true,
       moq_exempt: session.exemptFromMoq,
+      customer_type: session.customerType,
       product_wholesale: variants.length > 0,
       product_id: productId,
       product_title: productData.title,
@@ -797,6 +800,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
                 hiddenVariantIds: parseHiddenVariantIds(node.product?.hiddenVariants?.value),
                 productActive: node.product?.status === "ACTIVE",
                 customerType: session.customerType,
+                customerDiscountPercent: session.discountPercent,
                 retailCents,
               });
               if (state.available) unitPriceCents = state.priceCents;
@@ -1098,6 +1102,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     hiddenVariantIds: parseHiddenVariantIds(variantData.product?.hiddenVariants?.value),
     productActive: variantData.product?.status === "ACTIVE",
     customerType: wholesaleSession.customerType,
+    customerDiscountPercent: wholesaleSession.discountPercent,
     retailCents,
   });
   if (!state.available) {
@@ -1446,6 +1451,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
       hiddenVariantIds: parseHiddenVariantIds(node.product?.hiddenVariants?.value),
       productActive: node.product?.status === "ACTIVE",
       customerType: wholesaleSession.customerType,
+      customerDiscountPercent: wholesaleSession.discountPercent,
       retailCents,
     });
     if (!state.available) {

@@ -119,6 +119,12 @@
     return customerType === "DISTRIBUTOR";
   }
 
+  // Label for the wh_price column. B2B accounts get their own tier name —
+  // the server prices wh_price at retail minus the B2B profile discount.
+  function priceColumnLabel() {
+    return customerType === "B2B" ? "B2B" : "Wholesale";
+  }
+
   // MOQ-exempt customers still SEE real MOQs (informational, with a courtesy
   // note at the top of the sheet) but nothing blocks below-MOQ quantities.
   var moqExempt = false;
@@ -245,7 +251,7 @@
       html += '<th class="wh-ls-col-variant">Variant</th>';
       html += "<th>SKU</th>";
       html += sortableTh("Retail", "retail", true);
-      html += "<th>Wholesale</th>";
+      html += "<th>" + priceColumnLabel() + "</th>";
       if (isDistributor()) html += "<th>Distributor</th>";
       html += '<th class="wh-ls-col-moq">MOQ</th>';
       html += '<th class="wh-ls-col-stock">Stock</th>';
@@ -393,7 +399,7 @@
 
   // Rows for CSV/TSV: [Product, Variant, SKU, Retail, Wholesale, (Distributor,) MOQ, Case, Stock, Qty]
   function buildExportRows(content) {
-    var header = ["Product", "Variant", "SKU", "Retail", "Wholesale"];
+    var header = ["Product", "Variant", "SKU", "Retail", priceColumnLabel()];
     if (isDistributor()) header.push("Distributor");
     header = header.concat(["MOQ", "Case Size", "Stock", "Qty"]);
     var rows = [header];
