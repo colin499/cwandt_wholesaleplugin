@@ -527,7 +527,7 @@
         });
     }
 
-    // Arriving from the sheet's "Review Wholesale Order →" button: open the
+    // Arriving from the sheet's "Review Order →" button: open the
     // draft for review immediately.
     loadList(window.location.hash === "#draft");
 

@@ -845,7 +845,7 @@
 
     if (!ctx) {
       banner.appendChild(document.createTextNode(
-        "Changes save to your draft automatically. Submit with Review Wholesale Order."
+        "Changes save to your draft automatically. Submit with Review Order."
       ));
       return;
     }
