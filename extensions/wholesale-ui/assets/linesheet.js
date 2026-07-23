@@ -789,29 +789,20 @@
 
   function clearEditContext() {
     try { sessionStorage.removeItem(EDIT_KEY); } catch (e) { /* ignore */ }
-    var banner = document.getElementById("wh-ls-edit-banner");
-    if (banner) banner.remove();
-    // Undo the line-1 wrapper: move status + summary back to the bar.
-    var line1 = document.getElementById("wh-ls-edit-line1");
-    if (line1 && line1.parentNode) {
-      var key = document.getElementById("wh-ls-summary-key");
-      if (key) key.remove();
-      while (line1.firstChild) line1.parentNode.insertBefore(line1.firstChild, line1);
-      line1.remove();
-    }
-    var bar = document.querySelector(".wh-ls-sticky");
-    if (bar) bar.classList.remove("wh-ls-sticky--editing");
+    // The two-line bar layout stays — only the NOTES line changes back to
+    // the draft copy (and the SUMMARY status is reset by the caller).
+    updateBarNotes();
   }
 
-  // Edit mode renders as two compact labelled lines in the sticky bar:
-  //   SUMMARY : EDITING #D1788 | 2 PRODUCTS | …   (status + totals)
-  //   NOTES : how the edit behaves + cancel link  (blue text)
+  // The sticky bar renders as two compact labelled lines, draft and edit
+  // mode alike (2026-07-23 — previously edit-only):
+  //   SUMMARY : DRAFT SAVED | 2 PRODUCTS | …      (status + totals)
+  //   NOTES : mode copy (+ cancel link in edit)   (blue text)
   // Labels are fixed-width (9ch, same as the PO # panel's keys) with the
   // colon carried by the following element, so all three colon columns —
   // PO # panel, SUMMARY, NOTES — line up.
-  function renderEditBanner(summaryEl) {
-    var ctx = getEditContext();
-    if (!ctx || !summaryEl || !summaryEl.parentNode) return;
+  function renderStickyBar(summaryEl) {
+    if (!summaryEl || !summaryEl.parentNode) return;
     var bar = summaryEl.parentNode;
     bar.classList.add("wh-ls-sticky--editing");
 
@@ -829,9 +820,20 @@
     line1.appendChild(summaryEl);
     bar.insertBefore(line1, bar.firstChild);
 
-    // Line 2: NOTES label (black) + colon + blue note text.
+    // Line 2: NOTES label (black) + colon + blue note text per mode.
     var banner = document.createElement("div");
     banner.id = "wh-ls-edit-banner";
+    bar.appendChild(banner);
+    updateBarNotes();
+  }
+
+  // Fills the NOTES line for the current mode. Called on first render and
+  // again whenever edit mode ends without a reload (expired / cancelled).
+  function updateBarNotes() {
+    var banner = document.getElementById("wh-ls-edit-banner");
+    if (!banner) return;
+    var ctx = getEditContext();
+    banner.textContent = "";
     var key2 = document.createElement("span");
     key2.className = "wh-ls-line-key";
     key2.textContent = "NOTES";
@@ -840,6 +842,14 @@
     colon.className = "wh-ls-line-colon";
     colon.textContent = ": ";
     banner.appendChild(colon);
+
+    if (!ctx) {
+      banner.appendChild(document.createTextNode(
+        "Changes save to your draft automatically. Submit with Review Wholesale Order."
+      ));
+      return;
+    }
+
     banner.appendChild(document.createTextNode(
       ctx.paid
         ? "Order " + (ctx.name || "") + " is already paid, so you can add items " +
@@ -864,7 +874,6 @@
       );
     });
     banner.appendChild(cancel);
-    bar.appendChild(banner);
   }
 
   function showOrderResult(resultEl, ok, message, invoiceUrl) {
@@ -1132,10 +1141,10 @@
       // Restore the saved draft into the qty inputs.
       loadDraft(content, summaryEl, true);
 
-      // Arriving from Orders → "Edit": show the banner and relabel the
-      // submit button — edit mode submits from the sheet, updating the
-      // existing order in place.
-      renderEditBanner(summaryEl);
+      // Two-line SUMMARY/NOTES bar (draft and edit mode alike). Arriving
+      // from Orders → "Edit" additionally relabels the submit button —
+      // edit mode submits from the sheet, updating the existing order.
+      renderStickyBar(summaryEl);
       var editCtx = getEditContext();
       if (editCtx && submitBtn) {
         submitBtn.textContent = "Submit Changes to " + (editCtx.name || "Order") + " →";
