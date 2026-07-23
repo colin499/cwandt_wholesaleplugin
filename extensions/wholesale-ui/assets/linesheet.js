@@ -17,7 +17,7 @@
   "use strict";
 
   var SK_STATUS    = "wh_status";
-  var SK_LINESHEET = "wh_linesheet_v7"; // versioned key — bump if cache shape changes (v7: moq_exempt + real MOQs)
+  var SK_LINESHEET = "wh_linesheet_v8"; // versioned key — bump if cache shape changes (v8: customer_type)
   // Cache lifetime: just long enough to make rapid page-hopping instant.
   // Anything longer makes admin-side changes (MOQ exemption, prices, program
   // membership) look broken — a change should survive at most one reload.
@@ -104,13 +104,35 @@
      ---------------------------------------------------------------------- */
 
   // A distributor's effective unit price is dist_price; wh_price for others.
+  // Distributors still SEE the wholesale price alongside — it's the price
+  // they should sell to their own customers at.
   function effectivePrice(variant) {
     return variant.dist_price != null ? variant.dist_price : variant.wh_price;
   }
 
-  // True when the current customer sees distributor pricing (server sends
-  // dist_price only to distributor accounts). Set from response data.
-  var hasDistPricing = false;
+  // Customer type from the linesheet-data response: "WHOLESALE",
+  // "DISTRIBUTOR", or "B2B". Drives the partner note and the extra
+  // Distributor price column.
+  var customerType = "";
+
+  function isDistributor() {
+    return customerType === "DISTRIBUTOR";
+  }
+
+  // Partner note at the top of the sheet — copy varies by account type.
+  // B2B and any unknown type get the generic CW&T PARTNER line.
+  function renderPartnerNote() {
+    var el = document.getElementById("wh-ls-partner-note");
+    if (!el) return;
+    var partner =
+      customerType === "DISTRIBUTOR" ? "A DISTRIBUTION PARTNER" :
+      customerType === "WHOLESALE" ? "A WHOLESALE PARTNER" :
+      "A CW&T PARTNER";
+    el.textContent =
+      "YOU ARE LOGGED IN AS " + partner +
+      ". THANK YOU FOR WORKING WITH US. QUESTIONS? HELLO[AT]CWANDT.COM";
+    el.removeAttribute("hidden");
+  }
 
   // MOQ-exempt customers still SEE real MOQs (informational, with a courtesy
   // note at the top of the sheet) but nothing blocks below-MOQ quantities.
@@ -151,7 +173,7 @@
   }
 
   // Cells shared by variant rows and single-variant product rows:
-  // SKU | Retail | Wholesale | MOQ | Stock | Qty
+  // SKU | Retail | Wholesale | (Distributor |) MOQ | Stock | Qty
   function variantCellsHTML(variant) {
     var html = "";
     html += "<td>" + esc(variant.sku || "—") + "</td>";
@@ -163,7 +185,7 @@
       '<td class="wh-ls-col-price wh-ls-col-wh">' +
       formatMoney(variant.wh_price, variant.currency_code) +
       "</td>";
-    if (hasDistPricing) {
+    if (isDistributor()) {
       html +=
         '<td class="wh-ls-col-price wh-ls-col-dist">' +
         (variant.dist_price != null
@@ -219,12 +241,6 @@
       return '<p class="wh-ls-empty">No products are available in your line sheet.</p>';
     }
 
-    hasDistPricing = data.collections.some(function (c) {
-      return (c.products || []).some(function (p) {
-        return (p.variants || []).some(function (v) { return v.dist_price != null; });
-      });
-    });
-
     var html = "";
 
     data.collections.forEach(function (collection) {
@@ -245,7 +261,7 @@
       html += "<th>SKU</th>";
       html += sortableTh("Retail", "retail", true);
       html += "<th>Wholesale</th>";
-      if (hasDistPricing) html += "<th>Distributor</th>";
+      if (isDistributor()) html += "<th>Distributor</th>";
       html += '<th class="wh-ls-col-moq">MOQ</th>';
       html += '<th class="wh-ls-col-stock">Stock</th>';
       html += sortableTh("Qty", "qty", true, "wh-ls-col-qty wh-no-print");
@@ -393,7 +409,7 @@
   // Rows for CSV/TSV: [Product, Variant, SKU, Retail, Wholesale, (Distributor,) MOQ, Case, Stock, Qty]
   function buildExportRows(content) {
     var header = ["Product", "Variant", "SKU", "Retail", "Wholesale"];
-    if (hasDistPricing) header.push("Distributor");
+    if (isDistributor()) header.push("Distributor");
     header = header.concat(["MOQ", "Case Size", "Stock", "Qty"]);
     var rows = [header];
     if (!lastData || !lastData.collections) return rows;
@@ -410,7 +426,7 @@
             (variant.retail_price / 100).toFixed(2),
             (variant.wh_price / 100).toFixed(2),
           ];
-          if (hasDistPricing) {
+          if (isDistributor()) {
             row.push(variant.dist_price != null ? (variant.dist_price / 100).toFixed(2) : "");
           }
           rows.push(row.concat([
@@ -1103,6 +1119,8 @@
 
       lastData = data;
       moqExempt = !!data.moq_exempt;
+      customerType = data.customer_type || "";
+      renderPartnerNote();
       rebuildVariantProductMap(data);
       content.innerHTML =
         (moqExempt

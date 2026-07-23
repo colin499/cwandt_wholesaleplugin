@@ -450,7 +450,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         if (!state.available) return [];
 
         // Distributors see BOTH prices: wh_price stays the wholesale price
-        // and dist_price (their effective order price) rides alongside. For
+        // (the price they should sell to their own customers at) and
+        // dist_price (their effective order price) rides alongside. For
         // everyone else wh_price is the effective price and dist_price null.
         const isDistributor = session.customerType === "DISTRIBUTOR";
         return [{
@@ -489,6 +490,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     return proxyJson({
       wholesale: true,
       moq_exempt: session.exemptFromMoq,
+      customer_type: session.customerType,
       collections: [{ title: "", products: flatProducts }],
     });
   }
