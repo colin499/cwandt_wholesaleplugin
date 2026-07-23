@@ -119,21 +119,6 @@
     return customerType === "DISTRIBUTOR";
   }
 
-  // Partner note at the top of the sheet — copy varies by account type.
-  // B2B and any unknown type get the generic CW&T PARTNER line.
-  function renderPartnerNote() {
-    var el = document.getElementById("wh-ls-partner-note");
-    if (!el) return;
-    var partner =
-      customerType === "DISTRIBUTOR" ? "A DISTRIBUTION PARTNER" :
-      customerType === "WHOLESALE" ? "A WHOLESALE PARTNER" :
-      "A CW&T PARTNER";
-    el.textContent =
-      "YOU ARE LOGGED IN AS " + partner +
-      ". THANK YOU FOR WORKING WITH US. QUESTIONS? HELLO[AT]CWANDT.COM";
-    el.removeAttribute("hidden");
-  }
-
   // MOQ-exempt customers still SEE real MOQs (informational, with a courtesy
   // note at the top of the sheet) but nothing blocks below-MOQ quantities.
   var moqExempt = false;
@@ -1120,7 +1105,6 @@
       lastData = data;
       moqExempt = !!data.moq_exempt;
       customerType = data.customer_type || "";
-      renderPartnerNote();
       rebuildVariantProductMap(data);
       content.innerHTML =
         (moqExempt

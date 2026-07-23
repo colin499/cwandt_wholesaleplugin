@@ -37,9 +37,19 @@
   {% liquid
     assign wh_ls_url = block.settings.linesheet_url | default: '/pages/linesheet'
     assign wh_orders_url = block.settings.orders_url | default: '/pages/orders'
+
+    # Partner wording follows the account-type tag the app maintains
+    # (wholesale accounts carry only 'wholesale'; distributor/b2b carry a
+    # type tag alongside it). Topbar CSS renders this uppercase.
+    assign wh_partner = 'a wholesale partner'
+    if wh_tag_str contains '|distributor|'
+      assign wh_partner = 'a distribution partner'
+    elsif wh_tag_str contains '|b2b|'
+      assign wh_partner = 'a CW&amp;T partner'
+    endif
   %}
   <div class="wh-topbar" id="wh-topbar" hidden>
-    <span class="wh-topbar-label">You are logged in as a wholesale partner. For questions contact hello[at]cwandt.com.</span>
+    <span class="wh-topbar-label">You are logged in as {{ wh_partner }}. Thank you for working with us. Questions? hello[at]cwandt.com</span>
     <nav class="wh-topbar-nav" aria-label="Wholesale">
       <a href="{{ wh_ls_url }}"{% if request.path == wh_ls_url %} class="wh-topbar-active" aria-current="page"{% endif %}>Order Sheet</a>
       <span class="wh-topbar-sep" aria-hidden="true">|</span>

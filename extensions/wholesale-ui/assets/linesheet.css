@@ -26,14 +26,6 @@
   text-transform: uppercase;
 }
 
-/* Partner note — top of the sheet, copy set by linesheet.js per account type */
-.wh-ls-partner-note {
-  margin: 0 0 14px;
-  font-size: 12px;
-  line-height: 1.5;
-  letter-spacing: 0.04em;
-}
-
 @media screen and (max-width: 749.98px) {
   .wh-linesheet > :not(.wh-mobile-note) {
     display: none !important;
