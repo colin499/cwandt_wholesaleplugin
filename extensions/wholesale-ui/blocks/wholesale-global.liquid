@@ -23,6 +23,17 @@
 {% assign wh_tag_str = customer.tags | join: '|' | downcase | prepend: '|' | append: '|' %}
 {% if customer and wh_tag_str contains '|wholesale|' %}
   <meta name="wh-customer" content="1">
+  {% comment %} Mark this browser as a wholesale account (localStorage, so it
+     survives the storefront session cookie expiring) and reset the
+     auto-relogin bookkeeping — see the anonymous branch below. {% endcomment %}
+  <script>
+    try {
+      localStorage.setItem("wh_acct", "1");
+      localStorage.removeItem("wh_relogin_at");
+      localStorage.removeItem("wh_relogin_tries");
+      sessionStorage.removeItem("wh_relogin");
+    } catch (e) {}
+  </script>
   {{ 'wholesale.css' | asset_url | stylesheet_tag }}
   <script src="{{ 'wholesale.js' | asset_url }}" defer></script>
 
@@ -56,8 +67,52 @@
       <a href="{{ wh_orders_url }}"{% if request.path == wh_orders_url %} class="wh-topbar-active" aria-current="page"{% endif %}>Order History</a>
     </nav>
   </div>
+{% elsif customer %}
+  {% comment %} Logged in but not (or no longer) wholesale: make sure the
+     auto-relogin below never fires for this browser. {% endcomment %}
+  <meta name="wh-customer" content="0">
+  <script>try { localStorage.removeItem("wh_acct"); } catch (e) {}</script>
 {% else %}
   <meta name="wh-customer" content="0">
+  {% comment %}
+    Auto-heal for the split-session state (bit Taylor and Frieda, 2026-07/08):
+    the cwandt.com storefront session cookie expires independently of the
+    long-lived account.cwandt.com portal session. The customer then looks
+    logged in at the portal while the storefront treats them as anonymous, so
+    the wholesale UI silently vanishes and the system "looks broken".
+
+    If this browser has held a wholesale login before (wh_acct flag set
+    above), bounce once through the new-customer-accounts OIDC endpoint,
+    which returns to this exact page. Portal session alive → completes
+    silently in under a second, storefront cookie restored, wholesale UI
+    back. Portal session dead → the normal email-code login page, which is
+    honest. Verified live on this store 2026-08-03 (return_to honored).
+
+    Guards: once per tab (sessionStorage survives the round trip), at most
+    once per 30 minutes per browser, and after 3 attempts that never landed
+    back in the wholesale branch (which clears the counters) the flag is
+    dropped entirely — an intentionally logged-out customer sees the login
+    page a bounded number of times, never a loop.
+  {% endcomment %}
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem("wh_acct") !== "1") return;
+        var tries = Number(localStorage.getItem("wh_relogin_tries") || 0);
+        if (tries >= 3) { localStorage.removeItem("wh_acct"); return; }
+        if (sessionStorage.getItem("wh_relogin") === "1") return;
+        var last = Number(localStorage.getItem("wh_relogin_at") || 0);
+        if (Date.now() - last < 30 * 60 * 1000) return;
+        sessionStorage.setItem("wh_relogin", "1");
+        localStorage.setItem("wh_relogin_at", String(Date.now()));
+        localStorage.setItem("wh_relogin_tries", String(tries + 1));
+        location.replace(
+          "/customer_authentication/login?return_to=" +
+            encodeURIComponent(location.pathname + location.search)
+        );
+      } catch (e) {}
+    })();
+  </script>
 {% endif %}
 
 {% schema %}

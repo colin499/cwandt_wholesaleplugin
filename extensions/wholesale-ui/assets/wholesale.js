@@ -40,6 +40,19 @@
   // block's {% style %}. Checked once at load, like the theme's own layout.
   var WH_DESKTOP = !window.matchMedia || window.matchMedia("(min-width: 750px)").matches;
 
+  // Explicit logout should not fight the auto-relogin bounce in
+  // wholesale-global.liquid — drop the wholesale-browser flag on the way out.
+  document.addEventListener(
+    "click",
+    function (e) {
+      var a = e.target && e.target.closest && e.target.closest('a[href*="/account/logout"]');
+      if (a) {
+        try { localStorage.removeItem("wh_acct"); } catch (err) {}
+      }
+    },
+    true
+  );
+
   /* -------------------------------------------------------------------------
      1. Determine wholesale status
         Fast path: sessionStorage cache (instant, all pages after first visit)
