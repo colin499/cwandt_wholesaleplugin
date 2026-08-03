@@ -38,7 +38,8 @@ api_version = "2026-04"
     "customers/create",
     "customers/update",
     "orders/create",
-    "orders/updated"
+    "orders/updated",
+    "draft_orders/update"
   ]
 
   [[webhooks.subscriptions]]

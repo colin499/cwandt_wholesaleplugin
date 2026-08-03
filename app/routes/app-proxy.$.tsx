@@ -31,6 +31,7 @@ import {
   parseHiddenVariantIds,
   resolveVariantWholesale,
 } from "../lib/cms-client.server";
+import { parseStoredOrderLines } from "../lib/draft-order-sync.server";
 import { db } from "../db.server";
 
 // Wholesale availability (all endpoints): a variant is wholesale iff it has a
@@ -723,6 +724,27 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       if (!sheet) return json({ error: "Order sheet not found" }, { status: 404 });
 
       const lines = parseDraftLines(sheet.lines);
+
+      // Unit prices actually on the order, from the reconciled snapshots —
+      // they reflect Admin price adjustments. CMS-current pricing remains the
+      // fallback for legacy sheets without snapshots.
+      const sheetOrderIds = [sheet.shopifyDraftOrderId, sheet.shopifyBackorderDraftOrderId].filter(
+        (id): id is string => !!id
+      );
+      const storedPriceByVariant = new Map<number, number>();
+      if (sheetOrderIds.length > 0) {
+        const orderRows = await db.wholesaleOrder.findMany({
+          where: { shopifyDraftOrderId: { in: sheetOrderIds } },
+        });
+        for (const row of orderRows) {
+          for (const l of parseStoredOrderLines(row.linesJson)) {
+            if (l.variant_id != null && !storedPriceByVariant.has(l.variant_id)) {
+              storedPriceByVariant.set(l.variant_id, l.unit_price_cents);
+            }
+          }
+        }
+      }
+
       const statusMap = await fetchDraftOrderStatuses(
         admin,
         sheet.shopifyDraftOrderId ? [sheet.shopifyDraftOrderId] : []
@@ -812,7 +834,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
               variant_title: node && node.title !== "Default Title" ? node.title : "",
               sku: node?.sku ?? "",
               image_url: node?.image?.url ?? node?.product?.featuredImage?.url ?? null,
-              unit_price_cents: unitPriceCents,
+              unit_price_cents: storedPriceByVariant.get(Number(l.variant_id)) ?? unitPriceCents,
               product_url: node?.product?.handle
                 ? `/products/${node.product.handle}?variant=${l.variant_id}`
                 : null,
@@ -984,6 +1006,39 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     if (!source || !source.shopifyDraftOrderId) {
       return json({ error: "Order not found" }, { status: 404 });
     }
+
+    // Snapshot the PRIMARY order's reconciled lines when available: after an
+    // Admin edit they differ from the as-submitted sheet lines, and the sheet
+    // lines include the backorder half, which this edit never touches. Legacy
+    // rows without a snapshot fall back to the sheet lines.
+    const orderRow = await db.wholesaleOrder.findFirst({
+      where: { shopifyDraftOrderId: source.shopifyDraftOrderId },
+    });
+    const stored = parseStoredOrderLines(orderRow?.linesJson).filter(
+      (l) => l.variant_id != null
+    );
+    const useStored = stored.length > 0;
+
+    // Optimistic-lock stamp: the draft order's current updated_at. Best
+    // effort — when the lookup fails the submit-time conflict check is
+    // skipped, which is exactly the pre-lock behavior.
+    let baseUpdatedAt: Date | null = null;
+    const editShop = url.searchParams.get("shop");
+    if (editShop) {
+      try {
+        const { admin } = await unauthenticated.admin(editShop);
+        const res = await admin.graphql(
+          `query EditBaseUpdatedAt($id: ID!) { draftOrder(id: $id) { updatedAt } }`,
+          { variables: { id: `gid://shopify/DraftOrder/${source.shopifyDraftOrderId}` } }
+        );
+        const body = await res.json();
+        const ts = body.data?.draftOrder?.updatedAt;
+        if (ts) baseUpdatedAt = new Date(ts);
+      } catch (err) {
+        console.error("[app-proxy/linesheet-edit-begin] updatedAt lookup failed:", err);
+      }
+    }
+
     await db.linesheetDraft.deleteMany({
       where: { shopifyCustomerId: session.shopifyCustomerId, status: "EDITING" },
     });
@@ -991,11 +1046,16 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       data: {
         shopifyCustomerId: session.shopifyCustomerId,
         status: "EDITING",
-        lines: source.lines,
-        subtotalCents: source.subtotalCents,
+        lines: useStored
+          ? JSON.stringify(stored.map((l) => ({ variant_id: l.variant_id, quantity: l.quantity })))
+          : source.lines,
+        subtotalCents: useStored
+          ? stored.reduce((sum, l) => sum + l.total_cents, 0)
+          : source.subtotalCents,
         poNumber: source.poNumber,
         shipOwnLabel: source.shipOwnLabel,
         shopifyDraftOrderId: source.shopifyDraftOrderId,
+        editBaseUpdatedAt: baseUpdatedAt,
       },
     });
     return proxyJson({
@@ -1247,6 +1307,10 @@ async function handleLinesheetOrder(request: Request, url: URL) {
 
   const editOfDraftOrderId = String(payload?.edit_of ?? "").replace(/\D/g, "");
 
+  // Optimistic lock for edits: the draft order's updated_at when the edit
+  // session began. Null (legacy sessions, failed stamp) skips the check.
+  let editBaseUpdatedAt: Date | null = null;
+
   if (editOfDraftOrderId && rawLines.length === 0) {
     const editSheet = await db.linesheetDraft.findFirst({
       where: {
@@ -1265,6 +1329,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     rawLines = parseDraftLines(editSheet.lines) as Array<{ variant_id: unknown; quantity: unknown }>;
     poNumber = (editSheet.poNumber ?? "").slice(0, 120).trim();
     shipOwnLabel = editSheet.shipOwnLabel;
+    editBaseUpdatedAt = editSheet.editBaseUpdatedAt;
   } else if (payload?.draft_id && rawLines.length === 0) {
     const draftSheet = await db.linesheetDraft.findFirst({
       where: {
@@ -1333,6 +1398,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
             id
             name
             status
+            updatedAt
             lineItems(first: 250) { nodes { quantity variant { legacyResourceId } } }
             order {
               id
@@ -1350,6 +1416,27 @@ async function handleLinesheetOrder(request: Request, url: URL) {
         return json(
           { error: "The order you were editing can't be found.", edit_expired: true },
           { status: 422 }
+        );
+      }
+      // Optimistic lock: if the order changed after the edit session began
+      // (staff edited it in Admin, or another device), reject rather than
+      // silently overwrite that work. The session is cleared so reopening
+      // snapshots the current, reconciled contents.
+      if (
+        editBaseUpdatedAt &&
+        target.updatedAt &&
+        new Date(target.updatedAt).getTime() !== editBaseUpdatedAt.getTime()
+      ) {
+        await db.linesheetDraft.deleteMany({
+          where: { shopifyCustomerId: wholesaleSession.shopifyCustomerId, status: "EDITING" },
+        });
+        return json(
+          {
+            error: `Order ${target.name} was updated by CW&T while you were editing, so your changes were not applied. Please reopen the order to see the latest version and make your edits again.`,
+            edit_expired: true,
+            order_changed: true,
+          },
+          { status: 409 }
         );
       }
       const prevQtyFrom = (nodes: any[]): Map<string, number> => {
@@ -1487,6 +1574,10 @@ async function handleLinesheetOrder(request: Request, url: URL) {
       effectiveStock,
       requested: line.quantity,
       label,
+      variantIdNum: Number(line.variantId),
+      sku: node.sku ?? "",
+      title: node.product?.title ?? "",
+      unitPriceCents: state.priceCents,
       noFreeShipping: productHasNoFreeShippingTag(node.product),
       amountCents: state.priceCents * line.quantity,
       input: {
@@ -1557,6 +1648,20 @@ async function handleLinesheetOrder(request: Request, url: URL) {
   ];
 
   const sess = wholesaleSession; // non-null capture for the closure below
+
+  // Per-order line snapshot for WholesaleOrder.linesJson — same shape the
+  // draft_orders/update reconciler writes, so creation and webhook sync agree.
+  const storedLinesFor = (items: typeof lineItems) =>
+    JSON.stringify(
+      items.map((l) => ({
+        variant_id: l.variantIdNum,
+        quantity: l.input.quantity,
+        sku: l.sku,
+        title: l.title,
+        unit_price_cents: l.unitPriceCents,
+        total_cents: l.amountCents,
+      }))
+    );
 
   // Shipping is resolved per draft (stock and backorder split orders each get
   // their own): own-label always wins, a heavy item in the draft means staff
@@ -1762,7 +1867,8 @@ async function handleLinesheetOrder(request: Request, url: URL) {
         );
       }
 
-      // Sync our records; the edit session is finished.
+      // Sync our records; the edit session is finished. (No cursor update —
+      // the draft is COMPLETED, so draft webhooks no longer maintain it.)
       await db.wholesaleOrder.update({
         where: { id: editTarget.rowId },
         data: {
@@ -1771,6 +1877,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
             retailSubtotalCents > 0
               ? Math.round((1 - subtotalCents / retailSubtotalCents) * 100)
               : 0,
+          linesJson: storedLinesFor(lineItems),
         },
       });
       await db.linesheetDraft.updateMany({
@@ -1866,7 +1973,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
         `#graphql
         mutation linesheetDraftOrderUpdate($id: ID!, $input: DraftOrderInput!) {
           draftOrderUpdate(id: $id, input: $input) {
-            draftOrder { id name invoiceUrl }
+            draftOrder { id name invoiceUrl updatedAt }
             userErrors { field message }
           }
         }`,
@@ -1905,6 +2012,8 @@ async function handleLinesheetOrder(request: Request, url: URL) {
             ? Math.round((1 - subtotalCents / retailSubtotalCents) * 100)
             : 0,
         orderTags: JSON.stringify(tags),
+        linesJson: storedLinesFor(lineItems),
+        shopifyUpdatedAt: updated.updatedAt ? new Date(updated.updatedAt) : null,
       },
     });
     await db.linesheetDraft.updateMany({
@@ -1991,7 +2100,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
         `#graphql
         mutation linesheetDraftOrderCreate($input: DraftOrderInput!) {
           draftOrderCreate(input: $input) {
-            draftOrder { id name invoiceUrl totalPrice }
+            draftOrder { id name invoiceUrl totalPrice updatedAt }
             userErrors { field message }
           }
         }`,
@@ -2039,6 +2148,8 @@ async function handleLinesheetOrder(request: Request, url: URL) {
         backorderNote: isBackorderOrder ? "Split from linesheet order — invoice when stock arrives." : null,
         orderTags: JSON.stringify(tags),
         status: "PENDING",
+        linesJson: storedLinesFor(items),
+        shopifyUpdatedAt: draftOrder.updatedAt ? new Date(draftOrder.updatedAt) : null,
       },
     });
     return draftOrder;
@@ -2102,6 +2213,9 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     shipOwnLabel,
     status: "SUBMITTED",
     shopifyDraftOrderId: draftOrder.id.split("/").pop() ?? "",
+    shopifyBackorderDraftOrderId:
+      stockOrder && backorderOrder ? backorderOrder.id.split("/").pop() ?? null : null,
+    editBaseUpdatedAt: null,
     orderName:
       stockOrder && backorderOrder
         ? `${(queuedOrder ?? stockOrder).name} + ${backorderOrder.name} (backorder)`

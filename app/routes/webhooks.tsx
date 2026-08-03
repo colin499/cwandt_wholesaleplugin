@@ -2,6 +2,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { resolveDiscountPercent, reconcileCustomerFromWebhook } from "../lib/enrollment.server";
+import { reconcileDraftOrderFromWebhook } from "../lib/draft-order-sync.server";
 
 // All Shopify webhook payloads arrive here.
 // The authenticate.webhook() call verifies the HMAC signature automatically.
@@ -19,6 +20,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     case "ORDERS_CREATE":
     case "ORDERS_UPDATED":
       await handleOrderWebhook(payload as Record<string, unknown>);
+      break;
+
+    case "DRAFT_ORDERS_UPDATE":
+      // Admin edits to linesheet draft orders sync back into the stored
+      // sheet/order rows so the customer's Orders page shows the real
+      // contents. Cursor-guarded; ignores drafts the app didn't create.
+      await reconcileDraftOrderFromWebhook(payload as Record<string, unknown>);
       break;
 
     case "PRODUCTS_UPDATE":

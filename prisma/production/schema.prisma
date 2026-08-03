@@ -177,6 +177,15 @@ model WholesaleOrder {
   backorderNote       String?
   orderTags           String    @default("[]")
   status              String    @default("PENDING")
+  // Reconciled line snapshot of the Shopify draft order — JSON array of
+  // {variant_id: number|null, quantity, sku, title, unit_price_cents,
+  // total_cents}. Written at creation and kept current by the
+  // draft_orders/update webhook. variant_id null = custom (non-catalog) line.
+  linesJson           String    @default("[]")
+  // Shopify draft order updated_at at the time linesJson was captured — the
+  // reconcile cursor. Webhooks apply only when strictly newer (delivery is
+  // unordered and at-least-once).
+  shopifyUpdatedAt    DateTime?
   shopifyCreatedAt    DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
@@ -210,6 +219,13 @@ model LinesheetDraft {
   poNumber            String?  // customer's purchase-order reference
   shipOwnLabel        Boolean  @default(false) // customer provides shipping label
   shopifyDraftOrderId String?
+  // When a submission split out-of-stock lines into a second draft order,
+  // its id — so draft_orders/update webhooks on either order find this sheet.
+  shopifyBackorderDraftOrderId String?
+  // EDITING rows only: the Shopify draft order's updated_at when the edit
+  // session began. Optimistic lock — submit rejects if the order changed
+  // (e.g. staff edited it in Admin) after this moment.
+  editBaseUpdatedAt   DateTime?
   orderName           String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
