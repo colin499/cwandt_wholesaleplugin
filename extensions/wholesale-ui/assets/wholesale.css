@@ -49,6 +49,13 @@
   margin: 0;
 }
 
+/* display:flex above beats the UA's [hidden] rule — restore it, or rows
+   the JS keeps hidden (DISTRIBUTOR for non-distributors, empty MOQ) render
+   as a bare label with a colon. */
+.wh-price-row[hidden] {
+  display: none;
+}
+
 .wh-price-key {
   min-width: 10ch; /* aligns the colons; WHOLESALE / CASE SIZE are 9ch */
 }
