@@ -17,7 +17,7 @@
   "use strict";
 
   var SK_STATUS    = "wh_status";
-  var SK_LINESHEET = "wh_linesheet_v8"; // versioned key — bump if cache shape changes (v8: customer_type)
+  var SK_LINESHEET = "wh_linesheet_v9"; // versioned key — bump if cache shape changes (v9: can_make)
   // Cache lifetime: just long enough to make rapid page-hopping instant.
   // Anything longer makes admin-side changes (MOQ exemption, prices, program
   // membership) look broken — a change should survive at most one reload.
@@ -157,10 +157,29 @@
      ---------------------------------------------------------------------- */
 
   function stockCell(variant) {
-    // Anything not in stock is orderable as a backorder — say so.
+    // Anything not in stock is still orderable. If the CMS says we have the
+    // parts to build more, that's MADE TO ORDER (assembled on demand, ships
+    // quickly). Only stock 0 AND parts 0 is a true BACKORDER.
     var out = !variant.available || variant.in_stock <= 0;
-    var stockText = out ? "BACKORDER" : String(variant.in_stock);
+    var stockText = !out
+      ? String(variant.in_stock)
+      : variant.can_make > 0
+        ? "MADE TO ORDER"
+        : "BACKORDER";
     return '<td class="wh-ls-col-stock">' + esc(stockText) + "</td>";
+  }
+
+  // Buildable-to-order count from the CMS parts inventory. Display is capped
+  // at "100+" so exact parts counts stay internal; null/0 renders as a dash
+  // (no BOM data, or parts exhausted — the STOCK cell already tells that story).
+  function canMakeText(variant) {
+    var n = variant.can_make;
+    if (n == null || n <= 0) return "—";
+    return n >= 100 ? "100+" : String(n);
+  }
+
+  function canMakeCell(variant) {
+    return '<td class="wh-ls-col-canmake">' + esc(canMakeText(variant)) + "</td>";
   }
 
   // Cells shared by variant rows and single-variant product rows:
@@ -186,6 +205,7 @@
     }
     html += '<td class="wh-ls-col-moq">' + (variant.moq > 1 ? variant.moq : "1") + "</td>";
     html += stockCell(variant);
+    html += canMakeCell(variant);
     html += '<td class="wh-ls-col-qty wh-no-print">' + buildQtyInputHTML(variant) + "</td>";
     return html;
   }
@@ -255,6 +275,7 @@
       if (isDistributor()) html += "<th>Distributor</th>";
       html += '<th class="wh-ls-col-moq">MOQ</th>';
       html += '<th class="wh-ls-col-stock">Stock</th>';
+      html += '<th class="wh-ls-col-canmake">Can Make</th>';
       html += sortableTh("Qty", "qty", true, "wh-ls-col-qty wh-no-print");
       html += "</tr></thead>";
       html += "<tbody>";
@@ -397,11 +418,11 @@
     });
   }
 
-  // Rows for CSV/TSV: [Product, Variant, SKU, Retail, Wholesale, (Distributor,) MOQ, Case, Stock, Qty]
+  // Rows for CSV/TSV: [Product, Variant, SKU, Retail, Wholesale, (Distributor,) MOQ, Case, Stock, Can Make, Qty]
   function buildExportRows(content) {
     var header = ["Product", "Variant", "SKU", "Retail", priceColumnLabel()];
     if (isDistributor()) header.push("Distributor");
-    header = header.concat(["MOQ", "Case Size", "Stock", "Qty"]);
+    header = header.concat(["MOQ", "Case Size", "Stock", "Can Make", "Qty"]);
     var rows = [header];
     if (!lastData || !lastData.collections) return rows;
     lastData.collections.forEach(function (collection) {
@@ -423,7 +444,10 @@
           rows.push(row.concat([
             variant.moq > 1 ? variant.moq : 1,
             variant.case_size && variant.case_size > 1 ? variant.case_size : "",
-            !variant.available || variant.in_stock <= 0 ? "Backorder" : variant.in_stock,
+            !variant.available || variant.in_stock <= 0
+              ? (variant.can_make > 0 ? "Made to order" : "Backorder")
+              : variant.in_stock,
+            canMakeText(variant) === "—" ? "" : canMakeText(variant),
             qtyInput && qtyInput.value ? qtyInput.value : "",
           ]));
         });
@@ -1124,7 +1148,11 @@
       content.innerHTML =
         (moqExempt
           ? '<p class="wh-ls-moq-note">Although it is not required for your account, please try to meet MOQ where possible.</p>'
-          : "") + buildHTML(data);
+          : "") +
+        buildHTML(data) +
+        '<p class="wh-ls-canmake-note">CAN MAKE is how many more we can assemble from parts we keep in house. ' +
+        "MADE TO ORDER items are assembled when you order and ship quickly. " +
+        "BACKORDER items are waiting on parts, so they take longer.</p>";
       content.removeAttribute("hidden");
       wireSorting(content);
       wireSearch(content);

@@ -31,6 +31,7 @@ export type CmsWholesaleVariant = {
   moq: number;
   case_size: number | null;  // preferred case pack (soft encouragement); null = none
   in_stock: number;          // from CMS Variant; not used for stock display (Shopify is authoritative)
+  available_to_make: number | null; // buildable from parts on hand (BOM min); null = variant has no recipe
   status: string;
 };
 
@@ -102,6 +103,7 @@ export async function syncCmsDataToDb(): Promise<{ count: number; error?: string
         distributorPriceCents: Math.round(v.distributor_price * 100),
         moq: v.moq || 1,
         caseSize: v.case_size && v.case_size > 1 ? v.case_size : null,
+        availableToMake: v.available_to_make ?? null,
         cmsStatus: v.status || "",
       };
       return db.cmsVariantCache.upsert({
@@ -152,6 +154,7 @@ export type CmsCachedVariant = {
   distributorPriceCents: number;
   moq: number;
   caseSize: number | null;
+  availableToMake: number | null;
 };
 
 export type CmsLookupEntry = { id: number | string; sku?: string | null };
@@ -184,6 +187,7 @@ export async function getCmsVariantMap(
     distributorPriceCents: true,
     moq: true,
     caseSize: true,
+    availableToMake: true,
   } as const;
 
   const idRows = await db.cmsVariantCache.findMany({
@@ -197,6 +201,7 @@ export async function getCmsVariantMap(
     distributorPriceCents: row.distributorPriceCents,
     moq: row.moq,
     caseSize: row.caseSize,
+    availableToMake: row.availableToMake,
   });
   for (const row of idRows) map.set(row.shopifyVariantId, toCached(row));
 
@@ -227,7 +232,7 @@ export async function getCmsVariant(
 ): Promise<CmsCachedVariant | null> {
   return db.cmsVariantCache.findUnique({
     where: { shopifyVariantId: String(shopifyVariantId) },
-    select: { wholesalePriceCents: true, distributorPriceCents: true, moq: true, caseSize: true },
+    select: { wholesalePriceCents: true, distributorPriceCents: true, moq: true, caseSize: true, availableToMake: true },
   });
 }
 

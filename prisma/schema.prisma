@@ -239,6 +239,7 @@ model CmsVariantCache {
   distributorPriceCents Int      // CMS distributor_price × 100
   moq                   Int      @default(1)
   caseSize              Int?     // preferred case pack (soft); null = no case concept
+  availableToMake       Int?     // CMS available_to_make: buildable from parts on hand; null = no BOM in CMS
   cmsStatus             String   @default("")
   updatedAt             DateTime @updatedAt
 }

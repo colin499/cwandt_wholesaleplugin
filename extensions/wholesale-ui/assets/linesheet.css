@@ -319,6 +319,15 @@
   font-style: italic;
 }
 
+/* Legend under the table: CAN MAKE / MADE TO ORDER / BACKORDER definitions */
+.wh-ls-canmake-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-style: italic;
+}
+
 .wh-ls-sortable {
   cursor: pointer;
   user-select: none;
@@ -359,6 +368,10 @@
 
 .wh-ls-col-stock {
   width: 84px;
+}
+
+.wh-ls-col-canmake {
+  width: 72px;
 }
 
 .wh-ls-col-price {

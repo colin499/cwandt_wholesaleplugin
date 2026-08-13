@@ -470,6 +470,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           // with a courtesy note) but nothing enforces it (moq_exempt flag).
           moq: state.moq,
           case_size: state.caseSize,
+          // Buildable-to-order count from the CMS parts inventory (BOM min).
+          // null = no recipe data; 0 = parts exhausted (true backorder).
+          can_make: cms!.availableToMake,
           image_url: v.image?.url ?? null, // per-variant image; falls back to product image client-side
         }];
       });
