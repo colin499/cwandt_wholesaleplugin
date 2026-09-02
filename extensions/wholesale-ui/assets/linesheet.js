@@ -274,7 +274,7 @@
       html += "<th>" + priceColumnLabel() + "</th>";
       if (isDistributor()) html += "<th>Distributor</th>";
       html += '<th class="wh-ls-col-moq">MOQ</th>';
-      html += '<th class="wh-ls-col-stock">Stock</th>';
+      html += sortableTh("Stock", "stock", true, "wh-ls-col-stock");
       html += '<th class="wh-ls-col-canmake">Can Make</th>';
       html += sortableTh("Qty", "qty", true, "wh-ls-col-qty wh-no-print");
       html += "</tr></thead>";
