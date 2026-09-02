@@ -2,8 +2,10 @@
  * Order Sheets — customer linesheet drafts and submitted sheets.
  *
  * DRAFT rows are live carts customers are still filling in (autosaved from the
- * storefront linesheet). SUBMITTED rows are history — each one maps to a
- * Shopify draft order and can be duplicated by the customer as a new draft.
+ * storefront linesheet). Submitted sheets are history — a submission that
+ * split into a stock + backorder pair shows one row PER DRAFT ORDER, so the
+ * in-stock order (packable now) and the backorder are distinct and each has
+ * its own pick list.
  */
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
@@ -20,6 +22,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
+import { parseStoredOrderLines } from "../lib/draft-order-sync.server";
 
 function lineCount(lines: string): number {
   try {
@@ -44,18 +47,64 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
   const customerById = new Map(customers.map((c) => [c.shopifyCustomerId, c]));
 
+  const draftOrderIds = sheets.flatMap((s) =>
+    [s.shopifyDraftOrderId, s.shopifyBackorderDraftOrderId].filter((id): id is string => !!id)
+  );
+  const orders = await db.wholesaleOrder.findMany({
+    where: { shopifyDraftOrderId: { in: draftOrderIds } },
+    select: { shopifyDraftOrderId: true, orderName: true, totalAmount: true, linesJson: true },
+  });
+  const orderById = new Map(orders.map((o) => [o.shopifyDraftOrderId!, o]));
+
   return json({
     shop: session.shop,
-    sheets: sheets.map((s) => ({
-      id: s.id,
-      status: s.status,
-      lineCount: lineCount(s.lines),
-      subtotalCents: s.subtotalCents,
-      orderName: s.orderName,
-      shopifyDraftOrderId: s.shopifyDraftOrderId,
-      updatedAt: s.updatedAt,
-      customer: customerById.get(s.shopifyCustomerId) ?? null,
-    })),
+    drafts: sheets
+      .filter((s) => s.status === "DRAFT" && lineCount(s.lines) > 0)
+      .map((s) => ({
+        id: s.id,
+        lineCount: lineCount(s.lines),
+        subtotalCents: s.subtotalCents,
+        updatedAt: s.updatedAt,
+        customer: customerById.get(s.shopifyCustomerId) ?? null,
+      })),
+    // One row per draft order. The reconciled WholesaleOrder snapshot carries
+    // per-order counts/subtotals; legacy sheets without one fall back to the
+    // sheet's combined numbers.
+    submitted: sheets
+      .filter((s) => s.status === "SUBMITTED" && s.shopifyDraftOrderId)
+      .flatMap((s) => {
+        const customer = customerById.get(s.shopifyCustomerId) ?? null;
+        const half = (draftOrderId: string, kind: "stock" | "backorder") => {
+          const order = orderById.get(draftOrderId);
+          const storedLines = parseStoredOrderLines(order?.linesJson);
+          const hasSnapshot = storedLines.length > 0;
+          return {
+            key: `${s.id}:${draftOrderId}`,
+            sheetId: s.id,
+            draftOrderId,
+            kind,
+            orderName:
+              order?.orderName ?? (kind === "stock" ? s.orderName : "Backorder"),
+            lineCount: hasSnapshot
+              ? storedLines.length
+              : kind === "stock"
+                ? lineCount(s.lines)
+                : null,
+            subtotalCents: hasSnapshot
+              ? Math.round(order!.totalAmount)
+              : kind === "stock"
+                ? s.subtotalCents
+                : null,
+            updatedAt: s.updatedAt,
+            customer,
+          };
+        };
+        const rows = [half(s.shopifyDraftOrderId!, "stock")];
+        if (s.shopifyBackorderDraftOrderId) {
+          rows.push(half(s.shopifyBackorderDraftOrderId, "backorder"));
+        }
+        return rows;
+      }),
   });
 };
 
@@ -70,51 +119,14 @@ function customerLabel(c: { email: string; firstName: string | null; lastName: s
 }
 
 export default function LinesheetsPage() {
-  const { sheets, shop } = useLoaderData<typeof loader>();
+  const { drafts, submitted, shop } = useLoaderData<typeof loader>();
   const storeHandle = shop.replace(".myshopify.com", "");
 
-  const drafts = sheets.filter((s) => s.status === "DRAFT" && s.lineCount > 0);
-  const submitted = sheets.filter((s) => s.status === "SUBMITTED");
-
-  const table = (rows: typeof sheets) => (
-    <IndexTable
-      resourceName={{ singular: "sheet", plural: "sheets" }}
-      itemCount={rows.length}
-      selectable={false}
-      headings={[
-        { title: "Customer" },
-        { title: "Items" },
-        { title: "Subtotal" },
-        { title: "Updated" },
-        { title: "Order" },
-      ]}
-    >
-      {rows.map((s, index) => (
-        <IndexTable.Row id={s.id} key={s.id} position={index}>
-          <IndexTable.Cell>
-            <Text as="span" fontWeight="semibold">{customerLabel(s.customer)}</Text>
-            {s.customer && (
-              <Text as="span" tone="subdued">{" "}{s.customer.email}</Text>
-            )}
-          </IndexTable.Cell>
-          <IndexTable.Cell>{s.lineCount}</IndexTable.Cell>
-          <IndexTable.Cell>{money(s.subtotalCents)}</IndexTable.Cell>
-          <IndexTable.Cell>{new Date(s.updatedAt).toLocaleString()}</IndexTable.Cell>
-          <IndexTable.Cell>
-            {s.status === "SUBMITTED" && s.shopifyDraftOrderId ? (
-              <Link
-                url={`https://admin.shopify.com/store/${storeHandle}/draft_orders/${s.shopifyDraftOrderId}`}
-                target="_blank"
-              >
-                {s.orderName || "Draft order"}
-              </Link>
-            ) : (
-              <Badge tone="attention">Draft</Badge>
-            )}
-          </IndexTable.Cell>
-        </IndexTable.Row>
-      ))}
-    </IndexTable>
+  const customerCell = (c: (typeof drafts)[number]["customer"]) => (
+    <IndexTable.Cell>
+      <Text as="span" fontWeight="semibold">{customerLabel(c)}</Text>
+      {c && <Text as="span" tone="subdued">{" "}{c.email}</Text>}
+    </IndexTable.Cell>
   );
 
   return (
@@ -133,7 +145,26 @@ export default function LinesheetsPage() {
           <Card>
             <BlockStack gap="300">
               <Text as="h2" variant="headingMd">In progress ({drafts.length})</Text>
-              {table(drafts)}
+              <IndexTable
+                resourceName={{ singular: "sheet", plural: "sheets" }}
+                itemCount={drafts.length}
+                selectable={false}
+                headings={[
+                  { title: "Customer" },
+                  { title: "Items" },
+                  { title: "Subtotal" },
+                  { title: "Updated" },
+                ]}
+              >
+                {drafts.map((s, index) => (
+                  <IndexTable.Row id={s.id} key={s.id} position={index}>
+                    {customerCell(s.customer)}
+                    <IndexTable.Cell>{s.lineCount}</IndexTable.Cell>
+                    <IndexTable.Cell>{money(s.subtotalCents)}</IndexTable.Cell>
+                    <IndexTable.Cell>{new Date(s.updatedAt).toLocaleString()}</IndexTable.Cell>
+                  </IndexTable.Row>
+                ))}
+              </IndexTable>
             </BlockStack>
           </Card>
         )}
@@ -142,7 +173,51 @@ export default function LinesheetsPage() {
           <Card>
             <BlockStack gap="300">
               <Text as="h2" variant="headingMd">Submitted ({submitted.length})</Text>
-              {table(submitted)}
+              <IndexTable
+                resourceName={{ singular: "order", plural: "orders" }}
+                itemCount={submitted.length}
+                selectable={false}
+                headings={[
+                  { title: "Customer" },
+                  { title: "Order" },
+                  { title: "Type" },
+                  { title: "Items" },
+                  { title: "Subtotal" },
+                  { title: "Updated" },
+                  { title: "" },
+                ]}
+              >
+                {submitted.map((row, index) => (
+                  <IndexTable.Row id={row.key} key={row.key} position={index}>
+                    {customerCell(row.customer)}
+                    <IndexTable.Cell>
+                      <Link
+                        url={`https://admin.shopify.com/store/${storeHandle}/draft_orders/${row.draftOrderId}`}
+                        target="_blank"
+                      >
+                        {row.orderName || "Draft order"}
+                      </Link>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      {row.kind === "backorder" ? (
+                        <Badge tone="attention">Backorder</Badge>
+                      ) : (
+                        <Badge tone="success">In stock</Badge>
+                      )}
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>{row.lineCount ?? "—"}</IndexTable.Cell>
+                    <IndexTable.Cell>
+                      {row.subtotalCents != null ? money(row.subtotalCents) : "—"}
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>{new Date(row.updatedAt).toLocaleString()}</IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <Link url={`/app/linesheets/${row.sheetId}?order=${row.draftOrderId}`}>
+                        Pick list
+                      </Link>
+                    </IndexTable.Cell>
+                  </IndexTable.Row>
+                ))}
+              </IndexTable>
             </BlockStack>
           </Card>
         )}
