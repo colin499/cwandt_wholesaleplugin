@@ -1272,12 +1272,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 // terms. The theme cart is NOT used — it checks out at retail. Draft orders
 // also don't reserve inventory, so out-of-stock lines are fine (backorders
 // ride along in the same order).
-// How long an unpaid invoice holds its stock (per Taylor: 24 hours). After
+// How long an unpaid invoice holds its stock (per Taylor: 5 days, raised
+// from 24 hours on 2026-10-01 so shipping can pack + quote first). After
 // the hold lapses the stock is sellable again; an untouched invoice can then
 // hit the quantity-adjust failure at payment time, so staff should follow up
 // or re-issue. Staff can extend a hold on the draft in Shopify Admin
 // ("Reserve items").
-const INVOICE_INVENTORY_RESERVE_HOURS = 24;
+const INVOICE_INVENTORY_RESERVE_HOURS = 5 * 24;
 
 async function handleLinesheetOrder(request: Request, url: URL) {
   const shopifyCustomerId = url.searchParams.get("logged_in_customer_id");

@@ -27,7 +27,7 @@
   // no status jargon — the STATUS column already names the state.
   var STATUS_TIP = {
     DRAFT: "Your order is a draft. CW&T won't see it until you submit.",
-    SUBMITTED: "CW&T has received your order. Pay the invoice when you're ready and we'll prepare for shipment. Items will be reserved for 24 hours.",
+    SUBMITTED: "CW&T has received your order. Pay the invoice when you're ready and we'll prepare for shipment. Items will be reserved for 5 days.",
     INVOICE_SENT: "We've emailed your invoice. Once paid we'll start preparing your shipment.",
     PREPARING: "Your order is confirmed and we're preparing to ship.",
     PARTIALLY_SHIPPED: "Part of this order is on its way. The rest ships when it's ready.",
