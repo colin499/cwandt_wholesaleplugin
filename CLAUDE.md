@@ -52,6 +52,25 @@ synced folder.)
 | An extension/function build hangs silently (proc alive, 0% CPU, no output) | A function's `[extensions.build].command` recursively re-invokes `shopify app function build`, deadlocking on `.build-lock` | Leave `command = ""` for JS functions — CLI 3.94 builds them natively (esbuild→Javy). Never point `command` at a script that calls `shopify app function build` |
 | `Host version X does not match binary Y`, or weird esbuild failures | iCloud sync corrupted an esbuild binary | `find node_modules -name "* 2"`, then `npm ci`; move repo off iCloud |
 
+## Git Workflow — keep `main` in step with the feature branch
+
+Remote: `github.com/colin499/cwandt_wholesaleplugin` (Colin's account; collaborators are
+Taylor, Che-Wei, Colin). **All production work happens on `feat/unified-customers`**, and
+`main` is the branch collaborators branch from. The two must never drift.
+
+**Rule (added 2026-10-06): every time you push `feat/unified-customers`, push `main` to the
+same commit in the same step:**
+
+```
+git push origin feat/unified-customers && git push origin feat/unified-customers:main && git branch -f main origin/main
+```
+
+This is always a clean fast-forward because `main` never receives commits of its own. Stay on
+`feat/unified-customers`; never check out `main` to merge. If the push to `main` is blocked
+by a permission prompt, stop and give Taylor the exact command to run with the `!` prefix
+rather than leaving `main` behind. Before ending any session that pushed commits, verify
+`git rev-list --left-right --count feat/unified-customers...origin/main` prints `0 0`.
+
 ## Build Status
 
 - [x] Step 1: App scaffolded (Remix, TypeScript, Shopify CLI)
