@@ -21,6 +21,7 @@ import { Page, Card, Text, Banner, BlockStack } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { parseStoredOrderLines } from "../lib/draft-order-sync.server";
+import { getUpsConfig } from "../lib/ups.server";
 
 type PickLine = {
   sku: string;
@@ -39,7 +40,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   const customer = await db.wholesaleCustomer.findUnique({
     where: { shopifyCustomerId: sheet.shopifyCustomerId },
-    select: { email: true, firstName: true, lastName: true, company: true },
+    select: {
+      email: true, firstName: true, lastName: true, company: true,
+      upsAccountNumber: true, upsAccountPostalCode: true, billUpsAccount: true,
+    },
   });
 
   // Which of the sheet's draft orders to print. Anything not matching the
@@ -136,7 +140,20 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     otherOrderName = other?.orderName ?? (isBackorder ? "the in-stock order" : "a separate backorder");
   }
 
+  // Customer billed on their own UPS account (Customers → UPS): flag it for
+  // the packer, and offer the Ship page when the app's UPS credentials are set.
+  const upsBilling =
+    customer?.billUpsAccount && customer.upsAccountNumber
+      ? { account: customer.upsAccountNumber, postalCode: customer.upsAccountPostalCode }
+      : null;
+  const shipUrl =
+    upsBilling && targetId && sheet.status !== "DRAFT" && getUpsConfig()
+      ? `/app/linesheets/${sheet.id}/ship?order=${targetId}`
+      : null;
+
   return json({
+    upsBilling,
+    shipUrl,
     sheetStatus: sheet.status,
     orderName: orderName ?? sheet.orderName,
     isBackorder,
@@ -215,7 +232,7 @@ export default function PickListPage() {
   const data = useLoaderData<typeof loader>();
   const {
     orderName, isBackorder, poNumber, shipOwnLabel, customer, lines, source,
-    addressLines, otherOrderName, sheetStatus, submittedAt,
+    addressLines, otherOrderName, sheetStatus, submittedAt, upsBilling, shipUrl,
   } = data;
 
   const customerName =
@@ -232,6 +249,7 @@ export default function PickListPage() {
       titleMetadata={isBackorder ? <Text as="span" tone="critical" fontWeight="bold">BACKORDER</Text> : undefined}
       backAction={{ content: "Order Sheets", url: "/app/linesheets" }}
       primaryAction={{ content: "Print", onAction: () => printPickList(pageTitle) }}
+      secondaryActions={shipUrl ? [{ content: "Ship with UPS", url: shipUrl }] : undefined}
     >
       <BlockStack gap="400">
         {sheetStatus === "DRAFT" && (
@@ -262,6 +280,12 @@ export default function PickListPage() {
                     <div>Submitted {new Date(submittedAt).toLocaleDateString()}</div>
                     {isBackorder && <div className="pl-flag">BACKORDER — SHIPS WHEN STOCK IS AVAILABLE</div>}
                     {shipOwnLabel && <div className="pl-flag">CUSTOMER PROVIDES SHIPPING LABEL</div>}
+                    {upsBilling && !shipOwnLabel && (
+                      <div className="pl-flag">
+                        BILL CUSTOMER'S UPS ACCOUNT {upsBilling.account}
+                        {upsBilling.postalCode && ` · ZIP ${upsBilling.postalCode}`}
+                      </div>
+                    )}
                   </div>
                 </div>
                 {addressLines && (

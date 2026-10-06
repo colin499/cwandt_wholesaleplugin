@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Page,
   Card,
@@ -15,6 +15,7 @@ import {
   Banner,
   Tabs,
   Checkbox,
+  Popover,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
@@ -27,6 +28,7 @@ import {
   type BackfillResult,
 } from "../lib/enrollment.server";
 import { getOrderMinimumConfig } from "../lib/wholesale-customer.server";
+import { normalizeUpsAccountNumber } from "../lib/ups.server";
 
 const CUSTOMER_TYPES = [
   { label: "Wholesale", value: "WHOLESALE" },
@@ -115,6 +117,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       minimumOrderValue: c.minimumOrderValue,
       exemptFromMoq: c.exemptFromMoq,
       taxExempt: c.taxExempt,
+      upsAccountNumber: c.upsAccountNumber,
+      upsAccountPostalCode: c.upsAccountPostalCode,
+      upsAccountCountry: c.upsAccountCountry,
+      billUpsAccount: c.billUpsAccount,
       effectiveDiscount: resolveDiscountPercent(c),
       hasDiscountOverride: c.discountPercent !== null,
       profileName: c.pricingProfile?.name ?? null,
@@ -294,6 +300,57 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ ok: true });
   }
 
+  // ── UPS account (saved on its own; nothing here is projected to Shopify) ──
+  if (intent === "update_ups") {
+    const customerId = String(formData.get("customerId"));
+    const customer = await db.wholesaleCustomer.findUnique({ where: { id: customerId } });
+    if (!customer) return json({ error: "Customer not found" }, { status: 404 });
+
+    const rawAccount = String(formData.get("upsAccountNumber") ?? "").trim();
+    const postalCode = String(formData.get("upsAccountPostalCode") ?? "").trim().toUpperCase();
+    const country = String(formData.get("upsAccountCountry") ?? "").trim().toUpperCase() || "US";
+    const bill = String(formData.get("billUpsAccount")) === "true";
+
+    // Blank account number clears everything.
+    if (rawAccount === "") {
+      await db.wholesaleCustomer.update({
+        where: { id: customerId },
+        data: {
+          upsAccountNumber: null,
+          upsAccountPostalCode: null,
+          upsAccountCountry: null,
+          billUpsAccount: false,
+        },
+      });
+      return json({ ok: true });
+    }
+
+    const account = normalizeUpsAccountNumber(rawAccount);
+    if (!account) {
+      return json({ error: "UPS account numbers are 6 letters/digits." }, { status: 400 });
+    }
+    if (!/^[A-Z]{2}$/.test(country)) {
+      return json({ error: "Country must be a 2-letter code (e.g. US)." }, { status: 400 });
+    }
+    if (bill && !postalCode) {
+      return json(
+        { error: "UPS needs the account's billing postal code to bill it." },
+        { status: 400 }
+      );
+    }
+
+    await db.wholesaleCustomer.update({
+      where: { id: customerId },
+      data: {
+        upsAccountNumber: account,
+        upsAccountPostalCode: postalCode || null,
+        upsAccountCountry: country,
+        billUpsAccount: bill,
+      },
+    });
+    return json({ ok: true });
+  }
+
   return json({ error: "Unknown intent" }, { status: 400 });
 };
 
@@ -309,6 +366,10 @@ type CustomerRowData = {
   minimumOrderValue: number | null;
   exemptFromMoq: boolean;
   taxExempt: boolean;
+  upsAccountNumber: string | null;
+  upsAccountPostalCode: string | null;
+  upsAccountCountry: string | null;
+  billUpsAccount: boolean;
   effectiveDiscount: number;
   hasDiscountOverride: boolean;
   profileName: string | null;
@@ -347,6 +408,96 @@ const STATUS_OPTIONS = [
   { label: "Suspended", value: "SUSPENDED" },
   { label: "Rejected", value: "REJECTED" },
 ];
+
+// UPS account on file + whether to bill it for shipping. Its own popover and
+// its own save (intent "update_ups"), separate from the row's Save button.
+function UpsCell({ customer }: { customer: CustomerRowData }) {
+  const fetcher = useFetcher<{ ok?: boolean; error?: string }>();
+  const [open, setOpen] = useState(false);
+  const [account, setAccount] = useState(customer.upsAccountNumber ?? "");
+  const [postalCode, setPostalCode] = useState(customer.upsAccountPostalCode ?? "");
+  const [country, setCountry] = useState(customer.upsAccountCountry ?? "US");
+  const [bill, setBill] = useState(customer.billUpsAccount);
+
+  const saving = fetcher.state !== "idle";
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data?.ok) setOpen(false);
+  }, [fetcher.state, fetcher.data]);
+
+  const save = () =>
+    fetcher.submit(
+      {
+        intent: "update_ups",
+        customerId: customer.id,
+        upsAccountNumber: account.trim(),
+        upsAccountPostalCode: postalCode.trim(),
+        upsAccountCountry: country.trim(),
+        billUpsAccount: String(bill && account.trim() !== ""),
+      },
+      { method: "post" }
+    );
+
+  const summary = !customer.upsAccountNumber
+    ? "Add"
+    : customer.billUpsAccount
+      ? `Bill ${customer.upsAccountNumber}`
+      : `${customer.upsAccountNumber} (not billed)`;
+
+  return (
+    <Popover
+      active={open}
+      onClose={() => setOpen(false)}
+      activator={
+        <Button size="slim" disclosure onClick={() => setOpen((v) => !v)}>
+          {summary}
+        </Button>
+      }
+    >
+      <div style={{ padding: 16, width: 280 }}>
+        <BlockStack gap="300">
+          <TextField
+            label="UPS account number"
+            autoComplete="off"
+            placeholder="6 letters/digits"
+            value={account}
+            onChange={setAccount}
+            disabled={saving}
+          />
+          <InlineStack gap="200" wrap={false}>
+            <TextField
+              label="Billing ZIP"
+              autoComplete="off"
+              value={postalCode}
+              onChange={setPostalCode}
+              disabled={saving}
+            />
+            <div style={{ width: 80 }}>
+              <TextField
+                label="Country"
+                autoComplete="off"
+                value={country}
+                onChange={setCountry}
+                disabled={saving}
+              />
+            </div>
+          </InlineStack>
+          <Checkbox
+            label="Bill this account for shipping"
+            checked={bill}
+            disabled={saving || account.trim() === ""}
+            onChange={setBill}
+          />
+          {fetcher.data?.error && <Banner tone="critical">{fetcher.data.error}</Banner>}
+          <InlineStack align="end">
+            <Button size="slim" variant="primary" loading={saving} onClick={save}>
+              Save UPS
+            </Button>
+          </InlineStack>
+        </BlockStack>
+      </div>
+    </Popover>
+  );
+}
 
 function CustomerRow({ customer, index }: { customer: CustomerRowData; index: number }) {
   const fetcher = useFetcher();
@@ -465,6 +616,9 @@ function CustomerRow({ customer, index }: { customer: CustomerRowData; index: nu
           disabled={saving}
           onChange={setTaxExempt}
         />
+      </IndexTable.Cell>
+      <IndexTable.Cell>
+        <UpsCell customer={customer} />
       </IndexTable.Cell>
       <IndexTable.Cell>
         <Button
@@ -792,6 +946,7 @@ export default function CustomersPage() {
                 { title: "Min. Order" },
                 { title: "MOQ Exempt" },
                 { title: "Tax Exempt" },
+                { title: "UPS" },
                 { title: "" },
               ]}
               selectable={false}

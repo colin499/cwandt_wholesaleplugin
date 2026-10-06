@@ -5,14 +5,16 @@ import { AppProvider } from "@shopify/shopify-app-remix/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import polarisTranslations from "@shopify/polaris/locales/en.json";
 import { authenticate } from "../shopify.server";
+import { getUpsConfig } from "../lib/ups.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
-  return { apiKey: process.env.SHOPIFY_API_KEY || "" };
+  // UPS Shipping only shows once the app's UPS credentials are configured.
+  return { apiKey: process.env.SHOPIFY_API_KEY || "", upsEnabled: getUpsConfig() !== null };
 };
 
 export default function App() {
-  const { apiKey } = useLoaderData<typeof loader>();
+  const { apiKey, upsEnabled } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider isEmbeddedApp apiKey={apiKey} i18n={polarisTranslations}>
@@ -23,6 +25,7 @@ export default function App() {
         <a href="/app/pricing">Pricing</a>
         <a href="/app/backorders">Backorders</a>
         <a href="/app/linesheets">Order Sheets</a>
+        {upsEnabled && <a href="/app/shipping">UPS Shipping</a>}
         <a href="/app/cms-sync">CMS Sync</a>
         <a href="/app/settings">Settings</a>
       </NavMenu>

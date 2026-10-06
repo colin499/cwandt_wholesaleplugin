@@ -81,6 +81,13 @@ model WholesaleCustomer {
   minimumOrderValue Float?
   exemptFromMoq     Boolean  @default(false) // per-customer: ignore variant MOQs everywhere
   taxExempt         Boolean  @default(false) // projected to Shopify Customer.taxExempt on sync
+  // UPS billing — admin-only. Never projected to Shopify or sent to the
+  // storefront. billUpsAccount = buy this customer's labels on THEIR account
+  // (see app/lib/ups.server.ts).
+  upsAccountNumber     String?  // customer's UPS account (6 alphanumeric)
+  upsAccountPostalCode String?  // billing postal code of that account — UPS validates the pair
+  upsAccountCountry    String?  // ISO-2; null = US
+  billUpsAccount       Boolean  @default(false)
   approvedAt        DateTime?
   approvedBy        String?
   notes             String?
@@ -242,6 +249,41 @@ model CmsVariantCache {
   availableToMake       Int?     // CMS available_to_make: buildable from parts on hand; null = no BOM in CMS
   cmsStatus             String   @default("")
   updatedAt             DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// UPS labels bought from the admin Ship pages, billed to the customer's own
+// UPS account. One row per UPS shipment (which may hold several packages).
+// The order is identified by its Shopify draft-order id and/or order id —
+// at least one is always set.
+// environment: "TEST" | "PRODUCTION" — TEST labels come from UPS's sandbox
+//   and are not valid for shipping.
+// status: "ACTIVE" | "VOIDED"
+// billingType: "RECEIVER" | "THIRD_PARTY"
+// packagesJson: JSON array of {trackingNumber, weightLbs, labelFormat,
+//   labelBase64} — the label image is kept so it can be reprinted.
+// ---------------------------------------------------------------------------
+model UpsShipment {
+  id                  String    @id @default(cuid())
+  sheetId             String?   // LinesheetDraft.id — null for orders made outside the order sheet
+  shopifyDraftOrderId String?   // set when the label was bought against a draft order
+  shopifyOrderId      String?   // set when bought against (or the draft had become) a real order
+  shopifyCustomerId   String
+  orderName           String?
+  environment         String
+  status              String    @default("ACTIVE")
+  shipmentId          String    // UPS shipment identification number (1Z…)
+  serviceCode         String
+  billingType         String
+  billedAccount       String
+  packagesJson        String    @default("[]")
+  voidedAt            DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([sheetId])
+  @@index([shopifyDraftOrderId])
+  @@index([shopifyOrderId])
 }
 
 // ---------------------------------------------------------------------------
