@@ -202,6 +202,52 @@ redirects to the sheet, which prefills from the draft. Note: a split
 stock+backorder submission stores only the primary draft order id, so status
 tracks the payable order.
 
+## UPS Labels Billed to the Customer's Account (stage 1, 2026-10-06)
+
+Staff can buy a UPS label for an order and have UPS bill the **customer's own
+UPS account**. Built to be inert and isolated:
+
+- **Off by default.** `getUpsConfig()` (`app/lib/ups.server.ts`) returns null
+  unless every required `UPS_*` env var is set (see `.env.example`); the nav
+  link and Ship actions are then hidden. Without `UPS_ENV=production` it talks
+  to UPS's test environment (`wwwcie.ups.com`) — sample labels, nobody
+  charged. (Sample labels can't be voided: UPS answers "No shipment found
+  within the allowed void period".)
+- **Nothing in the ordering path imports it.** `app-proxy.$.tsx`, enrollment,
+  draft-order sync, webhooks and the theme extension are untouched. The Ship
+  pages read Shopify + the customer / sheet rows and write only `UpsShipment`
+  rows — they never edit an order or draft order, so no `draft_orders/update`
+  webhook fires. No new Shopify scopes.
+- **Needs the Address protected field.** Reading `shippingAddress.address1` /
+  `zip` requires **Address** (plus Name, Phone) under Protected customer data
+  access for the app. Without it Shopify answers "not approved to use the
+  address1 field" (the pick list silently loses its Ship-to for the same
+  reason). Enabled on the dev app 2026-10-06; check the production app.
+- **Customer setup:** Customers → UPS column (popover): account number,
+  billing postal code, country, "Bill this account for shipping". Saved by
+  its own `update_ups` intent; not projected to Shopify or the storefront.
+- **Two ways in, one implementation** (`app/lib/ups-ship.server.ts` +
+  `app/components/UpsShipPage.tsx`):
+  - Pick list → **Ship with UPS** → `/app/linesheets/:id/ship` (an order
+    sheet's draft order; customer + PO come from the sheet).
+  - Nav → **UPS Shipping** (`/app/shipping`) → `/app/shipping/order/:id` or
+    `/app/shipping/draft/:id`. Lists open draft orders and unfulfilled orders
+    straight from Shopify for customers flagged "bill this account", plus a
+    lookup by order number — so orders staff create by hand in Shopify Admin
+    work too. The order's Shopify customer must have a `WholesaleCustomer`
+    row (enroll via Customers; hand-tagging alone still does nothing).
+- **Ship page:** packages (weight, optional dimensions), service, bill as
+  receiver or third party → `createUpsShipment`. Labels are stored on the
+  `UpsShipment` row for reprint; Void calls UPS and marks the row `VOIDED`.
+  A second label on the same order needs an explicit checkbox (it is a second
+  charge). US only. Errors are always returned as 4xx — the dev tunnel
+  replaces 502s with its own page, which broke the fetcher.
+
+Not built yet (stage 2): creating the Shopify fulfillment with the tracking
+number (needs fulfillment scopes → merchant re-approval), an order-time
+"Billed to customer's UPS account" shipping line / freight-quote bypass in
+`shippingLineFor`, and international shipments.
+
 ## Key Decisions
 
 | Decision | Choice | Why |
