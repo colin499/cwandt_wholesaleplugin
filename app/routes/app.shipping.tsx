@@ -26,6 +26,7 @@ import {
 import { authenticate } from "../shopify.server";
 import { getUpsConfig } from "../lib/ups.server";
 import { listShippableOrders } from "../lib/ups-ship.server";
+import { formatCharge } from "../lib/ups-services";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
@@ -170,9 +171,16 @@ export default function ShippingPage() {
                     </IndexTable.Cell>
                     <IndexTable.Cell>
                       {r.labels > 0 ? (
-                        <Badge tone="success">
-                          {`${r.labels} label${r.labels === 1 ? "" : "s"}`}
-                        </Badge>
+                        <InlineStack gap="200" blockAlign="center">
+                          <Badge tone="success">
+                            {`${r.labels} label${r.labels === 1 ? "" : "s"}`}
+                          </Badge>
+                          {r.estimatedTotal && (
+                            <Text as="span" tone="subdued" variant="bodySm">
+                              est. {formatCharge(r.estimatedTotal)}
+                            </Text>
+                          )}
+                        </InlineStack>
                       ) : (
                         <Text as="span" tone="subdued">—</Text>
                       )}

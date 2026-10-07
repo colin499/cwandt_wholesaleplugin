@@ -284,6 +284,12 @@ model UpsShipment {
   billingType         String
   billedAccount       String
   packagesJson        String    @default("[]")
+  // Rate quote shown when the label was bought (CW&T's published rate, an
+  // estimate — the customer's account is billed at their own rates).
+  estimatedCharge     String?
+  estimatedCurrency   String?
+  // TotalCharges from the UPS Ship response; 0.00 when the customer pays.
+  upsTotalCharge      String?
   voidedAt            DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt

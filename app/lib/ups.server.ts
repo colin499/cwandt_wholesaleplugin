@@ -21,6 +21,14 @@
  * The shipper is always CW&T; only the transportation charge is redirected,
  * via PaymentInformation.ShipmentCharge → BillReceiver / BillThirdParty.
  * UPS validates the billed account number against that account's postal code.
+ *
+ * Prices: because the customer's account pays, the Ship response reports the
+ * shipper's charges as 0.00. The only price we can show is a rate quote
+ * (Rating API "Shop", `rateUpsShipment`) at CW&T's published / negotiated
+ * rates — an estimate; UPS bills the customer at their own account's rates.
+ * The Rating API is a separate product that must be added to the app in the
+ * UPS Developer Portal; until then quotes fail with "Invalid Authentication
+ * Information" (code 250002) while labels keep working.
  */
 
 import { UPS_SERVICES, upsServiceLabel } from "./ups-services";
@@ -31,6 +39,7 @@ const UPS_HOSTS = {
 } as const;
 
 const SHIP_API_VERSION = "v2409";
+const RATE_API_VERSION = "v2409";
 const REQUEST_TIMEOUT_MS = 25_000;
 
 export type UpsEnvironment = keyof typeof UPS_HOSTS;
@@ -87,9 +96,30 @@ export type UpsPackageResult = {
   labelBase64: string;
 };
 
+// A money amount as UPS returns it ("12.34"), kept as a string so nothing is
+// rounded on the way to the database.
+export type UpsCharge = { amount: string; currency: string };
+
 export type UpsShipmentResult = {
   shipmentId: string;
   packages: UpsPackageResult[];
+  // What UPS says the shipper owes for this label. 0.00 when the customer's
+  // account is billed (the normal case here) — see the header comment.
+  totalCharge: UpsCharge | null;
+  negotiatedCharge: UpsCharge | null;
+};
+
+export type UpsRateInput = {
+  shipTo: UpsAddress;
+  packages: UpsPackageInput[];
+};
+
+export type UpsRateQuote = {
+  serviceCode: string;
+  // UPS published (daily) rate.
+  published: UpsCharge;
+  // CW&T's contract rate, when UPS returns one for the account.
+  negotiated: UpsCharge | null;
 };
 
 // UPS account numbers are six letters/digits (the middle of every 1Z number).
@@ -193,16 +223,14 @@ function packageBlock(p: UpsPackageInput, reference: string) {
   };
 }
 
-export function validateShipmentInput(input: UpsCreateShipmentInput): string | null {
-  const { shipTo, packages, billing } = input;
+// The parts of a shipment a rate quote also needs: a US address and sane packages.
+export function validateRateInput(input: UpsRateInput): string | null {
+  const { shipTo, packages } = input;
   if (!shipTo.address1 || !shipTo.city || !shipTo.state || !shipTo.postalCode) {
     return "The order's shipping address is incomplete.";
   }
   if (shipTo.countryCode.toUpperCase() !== "US") {
     return "Only US shipments are supported for UPS account billing right now.";
-  }
-  if (!UPS_SERVICES.some((s) => s.code === input.serviceCode)) {
-    return "Choose a UPS service.";
   }
   if (packages.length === 0) return "Add at least one package.";
   if (packages.length > 20) return "Too many packages for one shipment (max 20).";
@@ -216,6 +244,16 @@ export function validateShipmentInput(input: UpsCreateShipmentInput): string | n
     if (given !== 0 && (given !== 3 || dims.some((d) => !(Number(d) > 0)))) {
       return `Enter all three dimensions, or leave them all blank${n}.`;
     }
+  }
+  return null;
+}
+
+export function validateShipmentInput(input: UpsCreateShipmentInput): string | null {
+  const base = validateRateInput(input);
+  if (base) return base;
+  const { billing } = input;
+  if (!UPS_SERVICES.some((s) => s.code === input.serviceCode)) {
+    return "Choose a UPS service.";
   }
   if (!normalizeUpsAccountNumber(billing.accountNumber)) {
     return "The customer's UPS account number must be 6 letters/digits.";
@@ -263,6 +301,7 @@ export function buildShipmentRequest(config: UpsConfig, input: UpsCreateShipment
         PaymentInformation: {
           ShipmentCharge: { Type: "01", ...billTo },
         },
+        ShipmentRatingOptions: { NegotiatedRatesIndicator: "Y" },
         Service: { Code: input.serviceCode, Description: upsServiceLabel(input.serviceCode) },
         Package: pkgs.length === 1 ? pkgs[0] : pkgs,
       },
@@ -280,6 +319,13 @@ export function buildShipmentRequest(config: UpsConfig, input: UpsCreateShipment
   };
 }
 
+// {CurrencyCode, MonetaryValue} → UpsCharge, or null when absent/garbled.
+function parseCharge(node: any): UpsCharge | null {
+  const amount = String(node?.MonetaryValue ?? "").trim();
+  if (!/^\d+(\.\d+)?$/.test(amount)) return null;
+  return { amount, currency: String(node?.CurrencyCode ?? "USD") || "USD" };
+}
+
 export function parseShipmentResponse(body: any, labelFormat: UpsLabelFormat): UpsShipmentResult {
   const results = body?.ShipmentResponse?.ShipmentResults;
   const shipmentId = results?.ShipmentIdentificationNumber;
@@ -294,7 +340,54 @@ export function parseShipmentResponse(body: any, labelFormat: UpsLabelFormat): U
   if (!shipmentId || packages.length === 0 || packages.some((p) => !p.trackingNumber)) {
     throw new UpsError("UPS returned a response without tracking numbers.");
   }
-  return { shipmentId: String(shipmentId), packages };
+  return {
+    shipmentId: String(shipmentId),
+    packages,
+    totalCharge: parseCharge(results?.ShipmentCharges?.TotalCharges),
+    negotiatedCharge: parseCharge(results?.NegotiatedRateCharges?.TotalCharge),
+  };
+}
+
+// Rate quote for every service at once ("Shop"). Rated as CW&T the shipper,
+// with no payment redirection: that is the only way to get a real figure,
+// since a receiver-billed shipment rates as 0.00 for the shipper.
+export function buildRateRequest(config: UpsConfig, input: UpsRateInput) {
+  return {
+    RateRequest: {
+      Request: {
+        TransactionReference: { CustomerContext: "CW&T wholesale rate quote" },
+      },
+      Shipment: {
+        Shipper: { ...partyBlock(config.shipFrom), ShipperNumber: config.shipperNumber },
+        ShipTo: partyBlock(input.shipTo),
+        ShipFrom: partyBlock(config.shipFrom),
+        ShipmentRatingOptions: { NegotiatedRatesIndicator: "Y" },
+        Package: input.packages.map((p) => {
+          // Same block as a shipment, under the Rating API's field names.
+          const { Packaging, ReferenceNumber: _ref, ...rest } = packageBlock(p, "");
+          return { PackagingType: Packaging, ...rest };
+        }),
+      },
+    },
+  };
+}
+
+export function parseRateResponse(body: any): UpsRateQuote[] {
+  const raw = body?.RateResponse?.RatedShipment;
+  const list: any[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  const quotes: UpsRateQuote[] = [];
+  for (const r of list) {
+    const serviceCode = String(r?.Service?.Code ?? "");
+    const published = parseCharge(r?.TotalCharges);
+    if (!serviceCode || !published) continue;
+    quotes.push({
+      serviceCode,
+      published,
+      negotiated: parseCharge(r?.NegotiatedRateCharges?.TotalCharge),
+    });
+  }
+  // Only the services the Ship page offers, in its order.
+  return UPS_SERVICES.flatMap((s) => quotes.filter((q) => q.serviceCode === s.code));
 }
 
 // ── Network ──────────────────────────────────────────────────────────────────
@@ -372,6 +465,30 @@ export async function createUpsShipment(
     }
   );
   return parseShipmentResponse(body, config.labelFormat);
+}
+
+// Quotes every offered service. Throws UpsError (code 250002, "Invalid
+// Authentication Information") when the Rating product isn't enabled for the
+// app — the caller turns that into a setup hint.
+export async function rateUpsShipment(
+  config: UpsConfig,
+  input: UpsRateInput
+): Promise<UpsRateQuote[]> {
+  const invalid = validateRateInput(input);
+  if (invalid) throw new UpsError(invalid);
+
+  const token = await getAccessToken(config);
+  const body = await upsFetch(
+    `${UPS_HOSTS[config.environment]}/api/rating/${RATE_API_VERSION}/Shop`,
+    {
+      method: "POST",
+      headers: apiHeaders(token),
+      body: JSON.stringify(buildRateRequest(config, input)),
+    }
+  );
+  const quotes = parseRateResponse(body);
+  if (quotes.length === 0) throw new UpsError("UPS returned no rates for this shipment.");
+  return quotes;
 }
 
 export async function voidUpsShipment(config: UpsConfig, shipmentId: string): Promise<void> {

@@ -13,3 +13,14 @@ export const UPS_SERVICES = [
 export function upsServiceLabel(code: string): string {
   return UPS_SERVICES.find((s) => s.code === code)?.label ?? `UPS service ${code}`;
 }
+
+// "12.34" + "USD" → "$12.34" (falls back to "12.34 USD" for other currencies).
+export function formatCharge(c: { amount: string; currency: string }): string {
+  const n = Number(c.amount);
+  if (!Number.isFinite(n)) return `${c.amount} ${c.currency}`;
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: c.currency }).format(n);
+  } catch {
+    return `${n.toFixed(2)} ${c.currency}`;
+  }
+}

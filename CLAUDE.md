@@ -242,6 +242,29 @@ UPS account**. Built to be inert and isolated:
   A second label on the same order needs an explicit checkbox (it is a second
   charge). US only. Errors are always returned as 4xx — the dev tunnel
   replaces 502s with its own page, which broke the fetcher.
+- **Rates (added 2026-10-07):** "Get rates" on the Ship page (intent `rate` →
+  `rateUpsShipment`, Rating API `Shop`) quotes every offered service for the
+  entered packages. Rated as CW&T the shipper with no payment redirection —
+  a receiver-billed shipment rates as **0.00** for the shipper, so the Ship
+  response can't price the label (sandbox confirmed: all `ShipmentCharges`
+  0.00). The UI shows the UPS **list** rate (what an account without a
+  contract pays) and CW&T's negotiated rate when UPS returns one, labelled as
+  estimates; the quote for the chosen service is stored on `UpsShipment`
+  (`estimatedCharge`/`estimatedCurrency`, plus `upsTotalCharge` from the Ship
+  response) and shown on the shipment card and the UPS Shipping list. **The
+  Rating API is a separate product** that must be added to the app in the
+  UPS Developer Portal (My Apps → app → Add Products); until then UPS answers
+  401 code 250002 "Invalid Authentication Information" and the page shows a
+  setup hint while labels keep working. As of 2026-10-07 it is NOT enabled.
+- **Packing slip (added 2026-10-07):** the Ship page loads the order's line
+  items (`lineItems(first: 250)` on the order / draft order — no new scopes)
+  and prints a letter-size packing slip (ship-from, ship-to, order/PO, SKU /
+  item / qty, tracking numbers) from the same iframe trick. "Print label +
+  packing slip" chains the two print dialogs (4x6 label first, then letter),
+  since the label and the slip go to different printers; `printDocument`
+  resolves on `afterprint`. The slip is the customer-facing counterpart of the
+  internal pick list (`app.linesheets_.$id.tsx`), which keeps its checkboxes
+  and fill-in lines.
 
 Not built yet (stage 2): creating the Shopify fulfillment with the tracking
 number (needs fulfillment scopes → merchant re-approval), an order-time

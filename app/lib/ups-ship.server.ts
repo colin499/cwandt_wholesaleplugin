@@ -21,10 +21,13 @@ import {
   UpsError,
   createUpsShipment,
   getUpsConfig,
+  rateUpsShipment,
+  validateRateInput,
   validateShipmentInput,
   voidUpsShipment,
   type UpsAddress,
   type UpsBillingType,
+  type UpsCharge,
   type UpsPackageInput,
   type UpsPackageResult,
 } from "./ups.server";
@@ -42,6 +45,14 @@ export type ShipTarget = { kind: "DRAFT" | "ORDER"; id: string };
 
 type StoredPackage = UpsPackageResult & { weightLbs: number };
 
+// One line of the order, for the packing slip.
+export type ShipLine = {
+  sku: string;
+  title: string;
+  variantTitle: string | null;
+  quantity: number;
+};
+
 type ShopifyShipOrder = {
   name: string | null;
   poNumber: string | null;
@@ -50,6 +61,7 @@ type ShopifyShipOrder = {
   cancelled: boolean;
   // A draft order's completed order, once it has one.
   linkedOrderId: string | null;
+  lines: ShipLine[];
 };
 
 // Shopify withholds address fields from apps that haven't been granted them
@@ -68,6 +80,9 @@ const SHIP_FIELDS = `
   customer { legacyResourceId }
   shippingAddress {
     name company address1 address2 city provinceCode zip countryCodeV2 phone
+  }
+  lineItems(first: 250) {
+    nodes { sku title variantTitle quantity }
   }
 `;
 
@@ -97,12 +112,23 @@ async function loadShopifyOrder(
   if (!node) return null;
 
   const a = node.shippingAddress;
+  const lines: ShipLine[] = (node.lineItems?.nodes ?? [])
+    .map((n: any) => ({
+      sku: String(n.sku ?? ""),
+      title: String(n.title ?? ""),
+      variantTitle:
+        n.variantTitle && n.variantTitle !== "Default Title" ? String(n.variantTitle) : null,
+      quantity: Number(n.quantity ?? 0),
+    }))
+    .filter((l: ShipLine) => l.quantity > 0)
+    .sort((x: ShipLine, y: ShipLine) => x.sku.localeCompare(y.sku, undefined, { numeric: true }));
   return {
     name: node.name ?? null,
     poNumber: node.poNumber ?? null,
     customerId: node.customer?.legacyResourceId ? String(node.customer.legacyResourceId) : null,
     cancelled: !!node.cancelledAt,
     linkedOrderId: node.order?.legacyResourceId ? String(node.order.legacyResourceId) : null,
+    lines,
     shipTo: a
       ? {
           name: a.company || a.name || "",
@@ -163,6 +189,10 @@ function shipmentView(s: UpsShipment) {
     serviceLabel: upsServiceLabel(s.serviceCode),
     billedAccount: s.billedAccount,
     createdAt: s.createdAt.toISOString(),
+    estimatedCharge:
+      s.estimatedCharge && s.estimatedCurrency
+        ? ({ amount: s.estimatedCharge, currency: s.estimatedCurrency } as UpsCharge)
+        : null,
     // Label images only for live shipments — a voided label must not be reprinted.
     packages: parseStoredPackages(s.packagesJson).map((p) => ({
       trackingNumber: p.trackingNumber,
@@ -229,6 +259,19 @@ export async function loadShipPage(
     orderName: order?.name ?? sheet?.orderName ?? null,
     poNumber: sheet?.poNumber ?? order?.poNumber ?? null,
     shipTo: order?.shipTo ?? null,
+    lines: order?.lines ?? [],
+    // Printed at the top of the packing slip. Address only — no credentials.
+    shipFrom: config
+      ? {
+          name: config.shipFrom.name,
+          address1: config.shipFrom.address1,
+          address2: config.shipFrom.address2 ?? null,
+          city: config.shipFrom.city,
+          state: config.shipFrom.state,
+          postalCode: config.shipFrom.postalCode,
+          phone: config.shipFrom.phone ?? null,
+        }
+      : null,
     addressError,
     addressAccessMessage: ADDRESS_ACCESS_MESSAGE,
     notFound,
@@ -332,6 +375,49 @@ export async function handleShipAction(
     return json({ ok: true, voided: true });
   }
 
+  // ── Quote rates ────────────────────────────────────────────────────────────
+  // Every offered service for the entered packages, so staff can see the
+  // price before buying. An estimate at CW&T's rates: the customer's account
+  // is billed at its own rates.
+  if (intent === "rate") {
+    let order: ShopifyShipOrder | null;
+    try {
+      order = await loadShopifyOrder(admin, target);
+    } catch (err) {
+      console.error("[ship] order query failed:", err);
+      return fail(
+        isAddressAccessError(err)
+          ? ADDRESS_ACCESS_MESSAGE
+          : "Couldn't load the order from Shopify. Try again."
+      );
+    }
+    if (!order) return fail("Shopify has no such order.", 404);
+    if (!order.shipTo) return fail("The order has no shipping address in Shopify.");
+
+    const packages = parsePackages(String(formData.get("packages") ?? ""));
+    if (!packages) return fail("Invalid package details.");
+    const input = { shipTo: order.shipTo, packages };
+    const invalid = validateRateInput(input);
+    if (invalid) return fail(invalid);
+
+    try {
+      const quotes = await rateUpsShipment(config, input);
+      return json({
+        ok: true,
+        rates: quotes.map((q) => ({ ...q, label: upsServiceLabel(q.serviceCode) })),
+      });
+    } catch (err) {
+      console.error("[ship] rate quote failed:", err);
+      if (err instanceof UpsError && err.code === "250002") {
+        return fail(
+          "UPS won't quote rates for this app yet. In the UPS Developer Portal, add the " +
+            "Rating API to the app (My Apps → the app → Add Products). Labels still work."
+        );
+      }
+      return fail(err instanceof UpsError ? `UPS: ${err.message}` : "Couldn't get rates from UPS.");
+    }
+  }
+
   // ── Buy a label ────────────────────────────────────────────────────────────
   if (intent === "buy") {
     if (sheet?.status === "DRAFT") {
@@ -380,6 +466,14 @@ export async function handleShipAction(
     const serviceCode = String(formData.get("serviceCode") ?? "");
     const billingType: UpsBillingType =
       String(formData.get("billingType")) === "THIRD_PARTY" ? "THIRD_PARTY" : "RECEIVER";
+    // The quote the page showed for this service, if staff fetched one.
+    // Display-only, so it is taken as sent (after a shape check).
+    const estimatedAmount = String(formData.get("estimatedAmount") ?? "").trim();
+    const estimatedCurrency = String(formData.get("estimatedCurrency") ?? "").trim().toUpperCase();
+    const estimate =
+      /^\d+(\.\d+)?$/.test(estimatedAmount) && /^[A-Z]{3}$/.test(estimatedCurrency)
+        ? { amount: estimatedAmount, currency: estimatedCurrency }
+        : null;
     const orderName = order.name ?? sheet?.orderName ?? null;
     const poNumber = sheet?.poNumber ?? order.poNumber;
 
@@ -425,6 +519,9 @@ export async function handleShipAction(
           billingType,
           billedAccount: customer.upsAccountNumber,
           packagesJson: JSON.stringify(stored),
+          estimatedCharge: estimate?.amount ?? null,
+          estimatedCurrency: estimate?.currency ?? null,
+          upsTotalCharge: result.totalCharge?.amount ?? null,
         },
       });
     } catch (err) {
@@ -453,6 +550,8 @@ export type ShippableRow = {
   status: string;
   hasAddress: boolean;
   labels: number;
+  // Sum of the labels' rate estimates, when every label has one.
+  estimatedTotal: UpsCharge | null;
 };
 
 function shippableRow(kind: "DRAFT" | "ORDER", n: any): ShippableRow {
@@ -472,6 +571,7 @@ function shippableRow(kind: "DRAFT" | "ORDER", n: any): ShippableRow {
           : "Unfulfilled",
     hasAddress: !!n.shippingAddress,
     labels: 0,
+    estimatedTotal: null,
   };
 }
 
@@ -547,12 +647,27 @@ export async function listShippableOrders(admin: AdminClient, search: string) {
           { shopifyDraftOrderId: { in: rows.filter((r) => r.kind === "DRAFT").map((r) => r.id) } },
         ],
       },
-      select: { shopifyOrderId: true, shopifyDraftOrderId: true },
+      select: {
+        shopifyOrderId: true,
+        shopifyDraftOrderId: true,
+        estimatedCharge: true,
+        estimatedCurrency: true,
+      },
     });
     for (const r of rows) {
-      r.labels = labels.filter((l) =>
+      const mine = labels.filter((l) =>
         r.kind === "ORDER" ? l.shopifyOrderId === r.id : l.shopifyDraftOrderId === r.id
-      ).length;
+      );
+      r.labels = mine.length;
+      const currency = mine[0]?.estimatedCurrency ?? null;
+      if (
+        mine.length > 0 &&
+        currency &&
+        mine.every((l) => l.estimatedCharge && l.estimatedCurrency === currency)
+      ) {
+        const cents = mine.reduce((sum, l) => sum + Math.round(Number(l.estimatedCharge) * 100), 0);
+        r.estimatedTotal = { amount: (cents / 100).toFixed(2), currency };
+      }
     }
   }
 
