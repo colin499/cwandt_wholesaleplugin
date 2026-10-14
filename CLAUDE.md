@@ -189,6 +189,25 @@ autosaved ~800ms after edits via POST `/apps/wholesale/linesheet-draft`).
 Submitting flips the row to SUBMITTED (order name + Shopify draft order id).
 Admin view: /app/linesheets ("Order Sheets" nav).
 
+**Ship-to address is owned by the sheet (2026-10-14).** A draft order created
+with only `customerId` inherits the customer's default address, and when the
+account has none the draft (and a NET-terms order, which completes without a
+checkout) has no ship-to at all. So: the sheet's customer panel has a SHIP TO
+row (prefilled from the account default, editable per order, the form opens
+by itself when there is none), the address autosaves with the draft
+(`LinesheetDraft.shipToJson`, `ship_to` in the draft payload), and
+`handleLinesheetOrder` resolves sheet address ?? account default, refuses
+with 422 `ship_to_missing` if neither exists, and writes it as
+`shippingAddress` on every draft order it creates or updates (stock,
+backorder, in-place edit). The free-shipping line now keys off that address's
+country, not the account default. If the account had no address at all, the
+submitted one is saved back as its default (`customerUpdate.addresses` +
+`customerUpdateDefaultAddress`, only ever when the list is empty). Orders page
+detail shows the resolved ship-to; drafts without one get a pointer back to
+the sheet. Adding to an already-paid order (Order Edit API path) is exempt.
+**Needs the Protected customer data "Address" approval on the production
+app** (same requirement as the UPS pages) — verify before deploying.
+
 **Customer order history lives on its own Orders page** (2026-07-14): theme
 block `wholesale-orders.liquid` + `orders.js` on `/pages/orders` (linked from
 `wholesale-nav` and a "Previous orders →" link on the sheet). GET

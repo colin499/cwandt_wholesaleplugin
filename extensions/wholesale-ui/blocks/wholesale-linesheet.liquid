@@ -85,6 +85,35 @@
         <p class="wh-ls-kv">
           <span class="wh-ls-key">EMAIL</span><span class="wh-ls-val" id="wh-ls-cust-email"></span>
         </p>
+        {% comment %}
+          Ship-to: prefilled from the account's default address, editable per
+          order, autosaved with the draft and written onto the draft order at
+          submit. The form opens by itself when the account has no address —
+          an order can't be submitted without one.
+        {% endcomment %}
+        <p class="wh-ls-kv wh-ls-kv--top">
+          <span class="wh-ls-key">SHIP TO</span><span class="wh-ls-val"><span id="wh-ls-ship-to" class="wh-ls-ship-to">&mdash;</span><button type="button" id="wh-ls-ship-to-edit" class="wh-ls-link-btn">Edit</button></span>
+        </p>
+        <form id="wh-ls-ship-to-form" class="wh-ls-ship-to-form" hidden novalidate>
+          <p class="wh-ls-ship-to-note" id="wh-ls-ship-to-note" hidden>A shipping address is needed before your order can be submitted.</p>
+          <div class="wh-ls-ship-to-grid">
+            <input type="text" name="first_name" placeholder="First name" autocomplete="shipping given-name" maxlength="60">
+            <input type="text" name="last_name" placeholder="Last name" autocomplete="shipping family-name" maxlength="60">
+            <input type="text" name="company" placeholder="Company" class="wh-ls-span2" autocomplete="shipping organization" maxlength="120">
+            <input type="text" name="address1" placeholder="Street address" class="wh-ls-span2" autocomplete="shipping address-line1" maxlength="120">
+            <input type="text" name="address2" placeholder="Suite, floor, unit (optional)" class="wh-ls-span2" autocomplete="shipping address-line2" maxlength="120">
+            <input type="text" name="city" placeholder="City" autocomplete="shipping address-level2" maxlength="80">
+            <input type="text" name="province_code" placeholder="State / province code" autocomplete="shipping address-level1" maxlength="10">
+            <input type="text" name="zip" placeholder="ZIP / postal code" autocomplete="shipping postal-code" maxlength="20">
+            <select name="country_code" autocomplete="shipping country" aria-label="Country"></select>
+            <input type="tel" name="phone" placeholder="Phone (optional)" class="wh-ls-span2" autocomplete="shipping tel" maxlength="30">
+          </div>
+          <p class="wh-ls-ship-to-error" id="wh-ls-ship-to-error" role="alert" hidden></p>
+          <div class="wh-ls-ship-to-actions">
+            <button type="submit" class="wh-ls-btn wh-ls-btn--small">Save address</button>
+            <button type="button" class="wh-ls-btn wh-ls-btn--small" id="wh-ls-ship-to-cancel">Cancel</button>
+          </div>
+        </form>
         <p class="wh-ls-kv">
           <span class="wh-ls-key">SHIPPING</span><span class="wh-ls-val"><label class="wh-ls-own-label"><input type="checkbox" id="wh-ls-own-label"> I&rsquo;ll provide my own label</label></span>
         </p>
@@ -115,6 +144,7 @@
         <p class="wh-ls-kv"><span class="wh-ls-key">NAME</span><span class="wh-ls-val" id="wh-ls-print-name"></span></p>
         <p class="wh-ls-kv"><span class="wh-ls-key">COMPANY</span><span class="wh-ls-val" id="wh-ls-print-company"></span></p>
         <p class="wh-ls-kv"><span class="wh-ls-key">EMAIL</span><span class="wh-ls-val" id="wh-ls-print-email"></span></p>
+        <p class="wh-ls-kv wh-ls-kv--top"><span class="wh-ls-key">SHIP TO</span><span class="wh-ls-val wh-ls-ship-to" id="wh-ls-print-ship-to"></span></p>
       </div>
     </div>
     <p class="wh-ls-print-summary wh-print-only" id="wh-ls-print-summary"></p>

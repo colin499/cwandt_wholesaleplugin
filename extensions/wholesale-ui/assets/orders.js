@@ -260,6 +260,19 @@
     html += '<td class="wh-orders-subtotal-cell">' + formatMoney(order.subtotal_cents) + "</td>";
     html += "</tr></tfoot></table>";
 
+    // Ship-to: for a draft, the address submit will put on the order (sheet
+    // address, else the account default); for a submitted order, as submitted.
+    if (order.ship_to_lines && order.ship_to_lines.length > 0) {
+      html +=
+        '<p class="wh-orders-detail-foot">Ship to: ' +
+        order.ship_to_lines.map(esc).join(" · ") +
+        "</p>";
+    } else if (order.ship_to_missing) {
+      html +=
+        '<p class="wh-orders-detail-foot">No shipping address yet. ' +
+        '<a href="' + esc(sheetUrl) + '" class="wh-orders-draft-link">Add one on your order sheet</a> before submitting.</p>';
+    }
+
     if (order.ship_own_label) {
       html += '<p class="wh-orders-detail-foot">Customer provides own shipping label</p>';
     }

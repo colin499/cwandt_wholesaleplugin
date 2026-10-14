@@ -225,6 +225,9 @@ model LinesheetDraft {
   subtotalCents       Int      @default(0)
   poNumber            String?  // customer's purchase-order reference
   shipOwnLabel        Boolean  @default(false) // customer provides shipping label
+  // Ship-to address chosen on the sheet (JSON, see ShipTo in app-proxy).
+  // Null = use the customer's Shopify default address at submit time.
+  shipToJson          String?
   shopifyDraftOrderId String?
   // When a submission split out-of-stock lines into a second draft order,
   // its id — so draft_orders/update webhooks on either order find this sheet.

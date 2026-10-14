@@ -153,6 +153,80 @@
   background: #000;
 }
 
+/* Ship-to row: multi-line value, key + colon pinned to the first line. */
+.wh-ls-kv--top,
+.wh-ls-kv--top .wh-ls-val {
+  align-items: flex-start;
+}
+
+.wh-ls-ship-to {
+  white-space: pre-line;
+}
+
+/* Text-style button ("Edit" / "Add address") beside the ship-to value. */
+.wh-ls-link-btn {
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-decoration: underline;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin-left: 10px;
+  color: #000;
+  cursor: pointer;
+  flex: none;
+}
+
+/* Inline address form, indented under the value column (key 9ch + ": "). */
+.wh-ls-ship-to-form {
+  margin: 4px 0 8px 11ch;
+  max-width: 340px;
+}
+
+.wh-ls-ship-to-form[hidden] {
+  display: none;
+}
+
+.wh-ls-ship-to-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.wh-ls-ship-to-grid input,
+.wh-ls-ship-to-grid select {
+  font: inherit;
+  border: 1px solid #000;
+  border-radius: 0;
+  padding: 2px 6px;
+  width: 100%;
+  box-sizing: border-box;
+  background: #fff;
+  color: #000;
+}
+
+.wh-ls-span2 {
+  grid-column: span 2;
+}
+
+.wh-ls-ship-to-note {
+  margin: 0 0 4px;
+  font-style: italic;
+}
+
+.wh-ls-ship-to-error {
+  margin: 4px 0 0;
+  font-style: italic;
+}
+
+.wh-ls-ship-to-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
 /* --------------------------------------------------------------------------
    Live search filter — bottom-right of the header, just above the table.
    Filtering is screen-only: print and PDF always render the full sheet.

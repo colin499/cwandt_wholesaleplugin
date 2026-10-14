@@ -161,6 +161,210 @@ async function customerDefaultAddressIsUS(
   }
 }
 
+// ── Ship-to address ──────────────────────────────────────────────────────────
+// The sheet owns the order's ship-to. It is stored on the LinesheetDraft row
+// (shipToJson) as the customer entered it, falls back to the customer's
+// Shopify default address at submit time, and is written onto every draft
+// order (stock + backorder, create + edit) as `shippingAddress` — so NET-terms
+// orders (completed without a checkout) and drafts awaiting payment carry an
+// address from the moment they exist. Nothing here is read back from Shopify
+// as authority except the default-address fallback.
+type ShipTo = {
+  firstName: string;
+  lastName: string;
+  company: string;
+  address1: string;
+  address2: string;
+  city: string;
+  provinceCode: string;
+  zip: string;
+  countryCode: string;
+  phone: string;
+};
+
+const SHIP_TO_KEYS: Array<keyof ShipTo> = [
+  "firstName",
+  "lastName",
+  "company",
+  "address1",
+  "address2",
+  "city",
+  "provinceCode",
+  "zip",
+  "countryCode",
+  "phone",
+];
+
+// Countries where Shopify requires a province/state code on an address.
+const PROVINCE_REQUIRED = new Set(["US", "CA", "AU", "MX", "BR", "IN", "JP", "IT", "ES", "AR", "CL", "CO"]);
+
+// Accepts the client's snake_case or camelCase keys; returns null unless the
+// address is complete enough to put on an order (street, city, country, plus
+// state + ZIP where Shopify needs them). Field lengths are capped so a
+// hostile body can't bloat the row.
+function sanitizeShipTo(raw: unknown): ShipTo | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const pick = (camel: keyof ShipTo, snake: string, max = 120) =>
+    String(r[camel] ?? r[snake] ?? "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, max);
+  const s: ShipTo = {
+    firstName: pick("firstName", "first_name", 60),
+    lastName: pick("lastName", "last_name", 60),
+    company: pick("company", "company", 120),
+    address1: pick("address1", "address1", 120),
+    address2: pick("address2", "address2", 120),
+    city: pick("city", "city", 80),
+    provinceCode: pick("provinceCode", "province_code", 10).toUpperCase(),
+    zip: pick("zip", "zip", 20).toUpperCase(),
+    countryCode: pick("countryCode", "country_code", 2).toUpperCase(),
+    phone: pick("phone", "phone", 30),
+  };
+  if (!/^[A-Z]{2}$/.test(s.countryCode)) return null;
+  if (!s.address1 || !s.city) return null;
+  if (PROVINCE_REQUIRED.has(s.countryCode) && !s.provinceCode) return null;
+  if ((s.countryCode === "US" || s.countryCode === "CA") && !s.zip) return null;
+  return s;
+}
+
+function parseShipTo(stored: string | null | undefined): ShipTo | null {
+  if (!stored) return null;
+  try {
+    return sanitizeShipTo(JSON.parse(stored));
+  } catch {
+    return null;
+  }
+}
+
+// DraftOrderInput.shippingAddress / CustomerInput.addresses shape. Empty
+// optional fields are omitted — Shopify rejects "" for provinceCode.
+function shipToMailingInput(s: ShipTo): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const k of SHIP_TO_KEYS) if (s[k]) out[k] = s[k];
+  return out;
+}
+
+// Display lines for the sheet / Orders page / print header.
+function shipToLines(s: ShipTo): string[] {
+  const name = [s.firstName, s.lastName].filter(Boolean).join(" ");
+  return [
+    name,
+    s.company,
+    s.address1,
+    s.address2,
+    [s.city, s.provinceCode, s.zip].filter(Boolean).join(", "),
+    s.countryCode === "US" ? "" : s.countryCode,
+    s.phone,
+  ].filter(Boolean);
+}
+
+// Snake-case projection for the storefront JS (matches the form field names).
+function shipToPublic(s: ShipTo) {
+  return {
+    first_name: s.firstName,
+    last_name: s.lastName,
+    company: s.company,
+    address1: s.address1,
+    address2: s.address2,
+    city: s.city,
+    province_code: s.provinceCode,
+    zip: s.zip,
+    country_code: s.countryCode,
+    phone: s.phone,
+    lines: shipToLines(s),
+  };
+}
+
+// The customer's Shopify default address as a ShipTo (null if none / not
+// usable), plus whether they have ANY address on file — the sheet's address
+// is saved back to the account only when the account has none.
+// Reading address1/zip needs the Protected customer data "Address" approval
+// on the app; without it Shopify answers an error and this returns empty.
+async function fetchCustomerDefaultShipTo(
+  admin: { graphql: Function },
+  shopifyCustomerId: string
+): Promise<{ shipTo: ShipTo | null; hasAnyAddress: boolean }> {
+  try {
+    const res = await admin.graphql(
+      `query CustomerDefaultShipTo($id: ID!) {
+        customer(id: $id) {
+          addresses(first: 1) { id }
+          defaultAddress {
+            firstName lastName company address1 address2 city provinceCode zip countryCodeV2 phone
+          }
+        }
+      }`,
+      { variables: { id: `gid://shopify/Customer/${shopifyCustomerId}` } }
+    );
+    const body = await res.json();
+    if (body.errors?.length) {
+      console.error("[app-proxy] default address lookup errors:", body.errors);
+    }
+    const c = body.data?.customer;
+    const a = c?.defaultAddress;
+    return {
+      shipTo: a ? sanitizeShipTo({ ...a, countryCode: a.countryCodeV2 }) : null,
+      hasAnyAddress: (c?.addresses?.length ?? 0) > 0 || !!a,
+    };
+  } catch (err) {
+    console.error("[app-proxy] default address lookup failed:", err);
+    return { shipTo: null, hasAnyAddress: false };
+  }
+}
+
+// Save the sheet's ship-to as the customer's default address. Only called
+// when the account has no address at all (customerUpdate.addresses replaces
+// the whole list, so it must never run against an account that has one).
+// Best effort — the order already carries the address; this just means the
+// next order and the UPS Ship page have it on file.
+async function saveCustomerDefaultAddress(
+  admin: { graphql: Function },
+  shopifyCustomerId: string,
+  shipTo: ShipTo
+): Promise<void> {
+  const customerGid = `gid://shopify/Customer/${shopifyCustomerId}`;
+  try {
+    const res = await admin.graphql(
+      `mutation SaveCustomerShipTo($input: CustomerInput!) {
+        customerUpdate(input: $input) {
+          customer {
+            defaultAddress { id }
+            addresses(first: 1) { id }
+          }
+          userErrors { field message }
+        }
+      }`,
+      { variables: { input: { id: customerGid, addresses: [shipToMailingInput(shipTo)] } } }
+    );
+    const body = await res.json();
+    const errors = body.data?.customerUpdate?.userErrors ?? [];
+    if (errors.length > 0 || body.errors?.length) {
+      console.error("[app-proxy] customer address save failed:", errors, body.errors ?? "");
+      return;
+    }
+    const customer = body.data?.customerUpdate?.customer;
+    const addressId = customer?.addresses?.[0]?.id;
+    if (customer?.defaultAddress?.id || !addressId) return;
+    const res2 = await admin.graphql(
+      `mutation SetCustomerDefaultShipTo($addressId: ID!, $customerId: ID!) {
+        customerUpdateDefaultAddress(addressId: $addressId, customerId: $customerId) {
+          userErrors { field message }
+        }
+      }`,
+      { variables: { addressId, customerId: customerGid } }
+    );
+    const body2 = await res2.json();
+    const errors2 = body2.data?.customerUpdateDefaultAddress?.userErrors ?? [];
+    if (errors2.length > 0) {
+      console.error("[app-proxy] customer default address set failed:", errors2);
+    }
+  } catch (err) {
+    console.error("[app-proxy] customer address save threw:", err);
+  }
+}
+
 function notWholesale() {
   return json(
     { wholesale: false },
@@ -633,33 +837,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       take: 10,
     });
 
-    // Default shipping address from Shopify (best effort — panel renders
-    // without it if the lookup fails).
-    let address: string[] = [];
+    // The customer's Shopify default address (best effort — the sheet opens
+    // its address form when there is none; the ship-to saved on the draft
+    // row takes precedence over it).
+    let defaultShipTo: ShipTo | null = null;
     const shop = url.searchParams.get("shop");
     if (shop) {
       try {
         const { admin } = await unauthenticated.admin(shop);
-        const res = await admin.graphql(
-          `query CustomerAddress($id: ID!) {
-            customer(id: $id) {
-              defaultAddress {
-                address1 address2 city provinceCode zip countryCodeV2
-              }
-            }
-          }`,
-          { variables: { id: `gid://shopify/Customer/${session.shopifyCustomerId}` } }
-        );
-        const body = await res.json();
-        const a = body.data?.customer?.defaultAddress;
-        if (a) {
-          address = [
-            a.address1,
-            a.address2,
-            [a.city, a.provinceCode, a.zip].filter(Boolean).join(", "),
-            a.countryCodeV2 === "US" ? null : a.countryCodeV2,
-          ].filter(Boolean);
-        }
+        defaultShipTo = (await fetchCustomerDefaultShipTo(admin, session.shopifyCustomerId)).shipTo;
       } catch (err) {
         console.error("[app-proxy/linesheet-draft] address lookup failed:", err);
       }
@@ -670,6 +856,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       select: { firstName: true, lastName: true, email: true, company: true },
     });
 
+    const draftShipTo = draft ? parseShipTo(draft.shipToJson) : null;
+
     return proxyJson({
       wholesale: true,
       edit_missing: editMissing,
@@ -678,15 +866,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           [customerRow?.firstName, customerRow?.lastName].filter(Boolean).join(" ") ||
           customerRow?.email ||
           "",
+        first_name: customerRow?.firstName || "",
+        last_name: customerRow?.lastName || "",
         company: customerRow?.company || "",
         email: customerRow?.email || "",
-        address,
+        address: defaultShipTo ? shipToLines(defaultShipTo) : [],
+        ship_to: defaultShipTo ? shipToPublic(defaultShipTo) : null,
       },
       draft: draft
         ? {
             lines: parseDraftLines(draft.lines),
             po_number: draft.poNumber || "",
             ship_own_label: draft.shipOwnLabel,
+            ship_to: draftShipTo ? shipToPublic(draftShipTo) : null,
             updated_at: draft.updatedAt,
           }
         : null,
@@ -727,6 +919,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       if (!sheet) return json({ error: "Order sheet not found" }, { status: 404 });
 
       const lines = parseDraftLines(sheet.lines);
+      let detailShipTo = parseShipTo(sheet.shipToJson);
+      if (!detailShipTo && sheet.status === "DRAFT") {
+        detailShipTo = (await fetchCustomerDefaultShipTo(admin, session.shopifyCustomerId)).shipTo;
+      }
 
       // Unit prices actually on the order, from the reconciled snapshots —
       // they reflect Admin price adjustments. CMS-current pricing remains the
@@ -804,6 +1000,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           order_name: sheet.orderName || "—",
           po_number: sheet.poNumber || "",
           ship_own_label: sheet.shipOwnLabel,
+          // DRAFT: the address the order WILL ship to (sheet override, else
+          // the account default) so the review shows what submit will use;
+          // SUBMITTED: the address as submitted. Missing on a draft blocks
+          // submit with a pointer back to the sheet.
+          ship_to_lines: detailShipTo ? shipToLines(detailShipTo) : [],
+          ship_to_missing: sheet.status === "DRAFT" && !detailShipTo,
           submitted_at: sheet.updatedAt,
           subtotal_cents: sheet.subtotalCents,
           status: st.key,
@@ -949,6 +1151,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const subtotalCents = Math.max(0, Math.floor(Number(payload?.subtotal_cents)) || 0);
     const poNumber = String(payload?.po_number ?? "").slice(0, 120);
     const shipOwnLabel = payload?.ship_own_label === true;
+    // ship_to rides with every autosave. An incomplete/absent address clears
+    // the stored one (null = fall back to the customer's default at submit).
+    const shipTo = sanitizeShipTo(payload?.ship_to);
+    const shipToJson = shipTo ? JSON.stringify(shipTo) : null;
 
     // edit_of: autosave targets the EDITING session, never the working draft.
     const editOf = String(payload?.edit_of ?? "").replace(/\D/g, "");
@@ -971,6 +1177,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           subtotalCents,
           poNumber: poNumber || null,
           shipOwnLabel,
+          shipToJson,
         },
       });
       return proxyJson({ ok: true, line_count: lines.length });
@@ -979,7 +1186,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const saved = await upsertActiveDraft(session.shopifyCustomerId, lines, subtotalCents);
     await db.linesheetDraft.update({
       where: { id: saved.id },
-      data: { poNumber: poNumber || null, shipOwnLabel },
+      data: { poNumber: poNumber || null, shipOwnLabel, shipToJson },
     });
     return proxyJson({ ok: true, line_count: lines.length });
   }
@@ -1057,6 +1264,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           : source.subtotalCents,
         poNumber: source.poNumber,
         shipOwnLabel: source.shipOwnLabel,
+        shipToJson: source.shipToJson,
         shopifyDraftOrderId: source.shopifyDraftOrderId,
         editBaseUpdatedAt: baseUpdatedAt,
       },
@@ -1308,6 +1516,8 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     : [];
   let poNumber = String(payload?.po_number ?? "").slice(0, 120).trim();
   let shipOwnLabel = payload?.ship_own_label === true;
+  // Ship-to as saved on the sheet (null → customer's default address).
+  let sheetShipTo: ShipTo | null = sanitizeShipTo(payload?.ship_to);
 
   const editOfDraftOrderId = String(payload?.edit_of ?? "").replace(/\D/g, "");
 
@@ -1333,6 +1543,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     rawLines = parseDraftLines(editSheet.lines) as Array<{ variant_id: unknown; quantity: unknown }>;
     poNumber = (editSheet.poNumber ?? "").slice(0, 120).trim();
     shipOwnLabel = editSheet.shipOwnLabel;
+    sheetShipTo = parseShipTo(editSheet.shipToJson);
     editBaseUpdatedAt = editSheet.editBaseUpdatedAt;
   } else if (payload?.draft_id && rawLines.length === 0) {
     const draftSheet = await db.linesheetDraft.findFirst({
@@ -1348,6 +1559,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     rawLines = parseDraftLines(draftSheet.lines) as Array<{ variant_id: unknown; quantity: unknown }>;
     poNumber = (draftSheet.poNumber ?? "").slice(0, 120).trim();
     shipOwnLabel = draftSheet.shipOwnLabel;
+    sheetShipTo = parseShipTo(draftSheet.shipToJson);
   }
 
   const lines = rawLines
@@ -1667,13 +1879,29 @@ async function handleLinesheetOrder(request: Request, url: URL) {
       }))
     );
 
+  // Ship-to for every draft this submission creates or updates: the address
+  // saved on the sheet, else the customer's Shopify default. Required — a
+  // draft created with only customerId inherits nothing when the account has
+  // no address, and NET-terms orders complete without a checkout to collect
+  // one. Adding items to an already-paid order (Order Edit API) is exempt:
+  // that order's address was fixed at payment.
+  const customerAddress = await fetchCustomerDefaultShipTo(admin, sess.shopifyCustomerId);
+  const shipTo = sheetShipTo ?? customerAddress.shipTo;
+  if (!shipTo && !editTarget?.orderGid) {
+    return json(
+      {
+        error: "Add a shipping address on your order sheet before submitting.",
+        ship_to_missing: true,
+      },
+      { status: 422 }
+    );
+  }
+  const shippingAddress = shipTo ? shipToMailingInput(shipTo) : null;
+
   // Shipping is resolved per draft (stock and backorder split orders each get
   // their own): own-label always wins, a heavy item in the draft means staff
   // price real freight, otherwise US customers get the free line.
-  const customerIsUS = await customerDefaultAddressIsUS(
-    admin,
-    `gid://shopify/Customer/${sess.shopifyCustomerId}`
-  );
+  const customerIsUS = shipTo ? shipTo.countryCode === "US" : false;
   function shippingLineFor(items: typeof lineItems) {
     if (shipOwnLabel) return OWN_LABEL_SHIPPING_LINE;
     if (items.some((l) => l.noFreeShipping)) return null;
@@ -1954,6 +2182,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     const input = {
       lineItems: lineItems.map((l) => l.input),
       ...(shippingLine ? { shippingLine } : {}),
+      ...(shippingAddress ? { shippingAddress } : {}),
       reserveInventoryUntil: new Date(
         Date.now() + INVOICE_INVENTORY_RESERVE_HOURS * 60 * 60 * 1000
       ).toISOString(),
@@ -2033,11 +2262,15 @@ async function handleLinesheetOrder(request: Request, url: URL) {
         subtotalCents,
         poNumber: poNumber || null,
         shipOwnLabel,
+        shipToJson: shipTo ? JSON.stringify(shipTo) : null,
       },
     });
     await db.linesheetDraft.deleteMany({
       where: { shopifyCustomerId: wholesaleSession.shopifyCustomerId, status: "EDITING" },
     });
+    if (shipTo && !customerAddress.hasAnyAddress) {
+      await saveCustomerDefaultAddress(admin, sess.shopifyCustomerId, shipTo);
+    }
 
     return proxyJson({
       ok: true,
@@ -2068,6 +2301,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
       lineItems: items.map((l) => l.input),
       customerId: `gid://shopify/Customer/${sess.shopifyCustomerId}`,
       ...(shippingLine ? { shippingLine } : {}),
+      ...(shippingAddress ? { shippingAddress } : {}),
       // Reserve stock for the payable order: Shopify re-checks deny-policy
       // inventory when the customer pays the invoice, and if stock dipped
       // below the ordered qty in the meantime the checkout strips/adjusts
@@ -2215,6 +2449,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     subtotalCents,
     poNumber: poNumber || null,
     shipOwnLabel,
+    shipToJson: shipTo ? JSON.stringify(shipTo) : null,
     status: "SUBMITTED",
     shopifyDraftOrderId: draftOrder.id.split("/").pop() ?? "",
     shopifyBackorderDraftOrderId:
@@ -2234,6 +2469,12 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     });
   }
 
+  // First address this account has ever had → keep it on the customer so the
+  // next sheet prefills and the UPS Ship page / Admin see it. (Never when an
+  // address exists: that would replace the account's address list.)
+  if (shipTo && !customerAddress.hasAnyAddress) {
+    await saveCustomerDefaultAddress(admin, sess.shopifyCustomerId, shipTo);
+  }
 
   const stockFreight = !shipOwnLabel && stockItems.some((l) => l.noFreeShipping);
   return proxyJson({

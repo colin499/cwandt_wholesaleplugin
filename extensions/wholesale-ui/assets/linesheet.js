@@ -684,6 +684,175 @@
     return !!(el && el.checked);
   }
 
+  /* -------------------------------------------------------------------------
+     Ship-to address — the sheet owns the order's ship-to. Prefilled from the
+     account's default address, editable per order, autosaved with the draft
+     (ship_to) and written onto the draft order(s) at submit. When the account
+     has no address the form opens on its own: nothing can be submitted
+     without one (the server refuses too).
+     ---------------------------------------------------------------------- */
+
+  var shipTo = null;        // current address (snake_case fields) or null
+  var shipToDefault = null; // the account's default address, if any
+  var customerNames = { first: "", last: "" };
+
+  // ISO 3166-1 alpha-2; Shopify's CountryCode enum. Names via Intl.
+  var COUNTRY_CODES = (
+    "US CA GB AU AD AE AF AG AI AL AM AO AR AT AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ " +
+    "CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FO FR GA GD GE GF " +
+    "GG GH GI GL GM GN GP GQ GR GS GT GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP " +
+    "KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MK ML MM MN MO MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF " +
+    "NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PS PT PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN " +
+    "SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM UY UZ VA VC VE VG VN VU WF WS XK YE YT ZA ZM ZW"
+  ).split(" ");
+
+  var countryNames = null;
+  function countryName(code) {
+    if (!code) return "";
+    try {
+      if (!countryNames && window.Intl && Intl.DisplayNames) {
+        countryNames = new Intl.DisplayNames(["en"], { type: "region" });
+      }
+      if (countryNames) {
+        var n = countryNames.of(code);
+        if (n && n !== code) return n;
+      }
+    } catch (e) { /* fall through to the code */ }
+    return code;
+  }
+
+  // Countries where Shopify needs a state/province code on the address.
+  var PROVINCE_REQUIRED = { US: 1, CA: 1, AU: 1, MX: 1, BR: 1, IN: 1, JP: 1, IT: 1, ES: 1, AR: 1, CL: 1, CO: 1 };
+
+  function shipToLines(s) {
+    if (!s) return [];
+    var name = [s.first_name, s.last_name].filter(Boolean).join(" ");
+    return [
+      name,
+      s.company,
+      s.address1,
+      s.address2,
+      [s.city, s.province_code, s.zip].filter(Boolean).join(", "),
+      s.country_code === "US" ? "" : countryName(s.country_code),
+      s.phone,
+    ].filter(Boolean);
+  }
+
+  function renderShipTo() {
+    var text = shipTo ? shipToLines(shipTo).join("\n") : "—";
+    setText("wh-ls-ship-to", text);
+    setText("wh-ls-print-ship-to", text);
+    var editBtn = document.getElementById("wh-ls-ship-to-edit");
+    if (editBtn) editBtn.textContent = shipTo ? "Edit" : "Add address";
+  }
+
+  function populateCountrySelect(select) {
+    if (!select || select.options.length > 0) return;
+    var rest = COUNTRY_CODES.slice(2).map(function (c) { return { code: c, name: countryName(c) }; });
+    rest.sort(function (a, b) { return a.name.localeCompare(b.name); });
+    [{ code: "US", name: countryName("US") }, { code: "CA", name: countryName("CA") }]
+      .concat(rest)
+      .forEach(function (c) {
+        var opt = document.createElement("option");
+        opt.value = c.code;
+        opt.textContent = c.name;
+        select.appendChild(opt);
+      });
+  }
+
+  function fillShipToForm(form, s) {
+    var v = s || {};
+    var set = function (name, value) {
+      var el = form.elements[name];
+      if (el) el.value = value || "";
+    };
+    set("first_name", v.first_name || (s ? "" : customerNames.first));
+    set("last_name", v.last_name || (s ? "" : customerNames.last));
+    set("company", v.company);
+    set("address1", v.address1);
+    set("address2", v.address2);
+    set("city", v.city);
+    set("province_code", v.province_code);
+    set("zip", v.zip);
+    set("country_code", v.country_code || "US");
+    set("phone", v.phone);
+  }
+
+  // Returns { address } or { error }. Same rules as the server's sanitizeShipTo.
+  function readShipToForm(form) {
+    var get = function (name) {
+      var el = form.elements[name];
+      return el ? String(el.value || "").replace(/\s+/g, " ").trim() : "";
+    };
+    var a = {
+      first_name: get("first_name"),
+      last_name: get("last_name"),
+      company: get("company"),
+      address1: get("address1"),
+      address2: get("address2"),
+      city: get("city"),
+      province_code: get("province_code").toUpperCase(),
+      zip: get("zip").toUpperCase(),
+      country_code: get("country_code").toUpperCase(),
+      phone: get("phone"),
+    };
+    if (!a.address1) return { error: "Street address is required." };
+    if (!a.city) return { error: "City is required." };
+    if (!/^[A-Z]{2}$/.test(a.country_code)) return { error: "Choose a country." };
+    if (PROVINCE_REQUIRED[a.country_code] && !a.province_code) {
+      return { error: "State / province code is required (e.g. NY)." };
+    }
+    if ((a.country_code === "US" || a.country_code === "CA") && !a.zip) {
+      return { error: "ZIP / postal code is required." };
+    }
+    return { address: a };
+  }
+
+  function openShipToForm(required) {
+    var form = document.getElementById("wh-ls-ship-to-form");
+    if (!form) return;
+    populateCountrySelect(form.elements["country_code"]);
+    fillShipToForm(form, shipTo);
+    var note = document.getElementById("wh-ls-ship-to-note");
+    if (note) note.hidden = !required;
+    var err = document.getElementById("wh-ls-ship-to-error");
+    if (err) { err.hidden = true; err.textContent = ""; }
+    form.hidden = false;
+    var first = form.elements["address1"];
+    if (first && required) {
+      try { first.focus({ preventScroll: true }); } catch (e) { /* older browsers */ }
+    }
+  }
+
+  function closeShipToForm() {
+    var form = document.getElementById("wh-ls-ship-to-form");
+    if (form) form.hidden = true;
+  }
+
+  function initShipToForm(content) {
+    var form = document.getElementById("wh-ls-ship-to-form");
+    var editBtn = document.getElementById("wh-ls-ship-to-edit");
+    if (!form || !editBtn) return;
+    editBtn.addEventListener("click", function () {
+      if (form.hidden) openShipToForm(!shipTo); else closeShipToForm();
+    });
+    var cancelBtn = document.getElementById("wh-ls-ship-to-cancel");
+    if (cancelBtn) cancelBtn.addEventListener("click", closeShipToForm);
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var result = readShipToForm(form);
+      var err = document.getElementById("wh-ls-ship-to-error");
+      if (result.error) {
+        if (err) { err.textContent = result.error; err.hidden = false; }
+        return;
+      }
+      shipTo = result.address;
+      renderShipTo();
+      closeShipToForm();
+      scheduleDraftSave(content);
+    });
+  }
+
   function collectDraftPayload(content) {
     var lines = getOrderLines(content);
     var subtotal = 0;
@@ -695,6 +864,7 @@
       subtotal_cents: subtotal,
       po_number: getPoNumber(),
       ship_own_label: getShipOwnLabel(),
+      ship_to: shipTo,
     };
     // In edit mode every save targets the EDITING session, never the draft.
     var ctx = getEditContext();
@@ -769,7 +939,17 @@
           setText("wh-ls-print-name", data.customer.name || "—");
           setText("wh-ls-print-company", data.customer.company || "—");
           setText("wh-ls-print-email", data.customer.email || "—");
+          customerNames = {
+            first: data.customer.first_name || "",
+            last: data.customer.last_name || "",
+          };
+          shipToDefault = data.customer.ship_to || null;
         }
+        // Ship-to: the draft's own address wins, else the account default.
+        // Neither → open the form now rather than at Review time.
+        shipTo = (prefill && data.draft && data.draft.ship_to) || shipToDefault || null;
+        renderShipTo();
+        if (!shipTo) openShipToForm(true);
         if (prefill && data.draft) {
           if (data.draft.lines) applyDraftLines(content, data.draft.lines);
           // Edit mode: the order's own reservation consumed the live stock,
@@ -930,6 +1110,16 @@
         resultEl, false,
         "Some quantities are below the minimum order quantity. See highlights in Qty column."
       );
+      return;
+    }
+    if (!shipTo) {
+      showOrderResult(
+        resultEl, false,
+        "Add a shipping address (SHIP TO, top right) before reviewing your order."
+      );
+      openShipToForm(true);
+      var panel = document.getElementById("wh-ls-customer");
+      if (panel) panel.scrollIntoView({ block: "nearest", behavior: "smooth" });
       return;
     }
 
@@ -1222,6 +1412,7 @@
       });
       var ownEl = document.getElementById("wh-ls-own-label");
       if (ownEl) ownEl.addEventListener("change", function () { scheduleDraftSave(content); });
+      initShipToForm(content);
 
       if (printBtn) {
         printBtn.addEventListener("click", function () { window.print(); });
