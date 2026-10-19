@@ -278,19 +278,20 @@ function shipToPublic(s: ShipTo) {
 }
 
 // The customer's Shopify default address as a ShipTo (null if none / not
-// usable), plus whether they have ANY address on file — the sheet's address
-// is saved back to the account only when the account has none.
+// usable — e.g. a bare state-only address left behind by new customer
+// accounts), plus whether the lookup itself succeeded. The sheet's address
+// is saved back to the account whenever there is no USABLE default; a
+// failed lookup must not trigger that (we can't tell what's on file).
 // Reading address1/zip needs the Protected customer data "Address" approval
 // on the app; without it Shopify answers an error and this returns empty.
 async function fetchCustomerDefaultShipTo(
   admin: { graphql: Function },
   shopifyCustomerId: string
-): Promise<{ shipTo: ShipTo | null; hasAnyAddress: boolean }> {
+): Promise<{ shipTo: ShipTo | null; lookupOk: boolean }> {
   try {
     const res = await admin.graphql(
       `query CustomerDefaultShipTo($id: ID!) {
         customer(id: $id) {
-          addresses(first: 1) { id }
           defaultAddress {
             firstName lastName company address1 address2 city provinceCode zip countryCodeV2 phone
           }
@@ -301,22 +302,29 @@ async function fetchCustomerDefaultShipTo(
     const body = await res.json();
     if (body.errors?.length) {
       console.error("[app-proxy] default address lookup errors:", body.errors);
+      return { shipTo: null, lookupOk: false };
     }
     const c = body.data?.customer;
-    const a = c?.defaultAddress;
+    if (!c) return { shipTo: null, lookupOk: false };
+    const a = c.defaultAddress;
     return {
       shipTo: a ? sanitizeShipTo({ ...a, countryCode: a.countryCodeV2 }) : null,
-      hasAnyAddress: (c?.addresses?.length ?? 0) > 0 || !!a,
+      lookupOk: true,
     };
   } catch (err) {
     console.error("[app-proxy] default address lookup failed:", err);
-    return { shipTo: null, hasAnyAddress: false };
+    return { shipTo: null, lookupOk: false };
   }
 }
 
-// Save the sheet's ship-to as the customer's default address. Only called
-// when the account has no address at all (customerUpdate.addresses replaces
-// the whole list, so it must never run against an account that has one).
+// Save the sheet's address to the customer's account and make it the default.
+// Runs when the account has no USABLE default address (none at all, or an
+// incomplete one such as a state-only stub). Uses customerAddressCreate,
+// which APPENDS — it never touches existing addresses — so it is safe to run
+// against an account that already has (unusable) addresses on file; the old
+// stub simply stops being the default. Never run when the account already has
+// a complete default: an address typed for one order (trade show, drop-ship)
+// must not silently replace it.
 // Best effort — the order already carries the address; this just means the
 // next order and the UPS Ship page have it on file.
 async function saveCustomerDefaultAddress(
@@ -327,38 +335,18 @@ async function saveCustomerDefaultAddress(
   const customerGid = `gid://shopify/Customer/${shopifyCustomerId}`;
   try {
     const res = await admin.graphql(
-      `mutation SaveCustomerShipTo($input: CustomerInput!) {
-        customerUpdate(input: $input) {
-          customer {
-            defaultAddress { id }
-            addresses(first: 1) { id }
-          }
+      `mutation SaveCustomerShipTo($customerId: ID!, $address: MailingAddressInput!) {
+        customerAddressCreate(customerId: $customerId, address: $address, setAsDefault: true) {
+          address { id }
           userErrors { field message }
         }
       }`,
-      { variables: { input: { id: customerGid, addresses: [shipToMailingInput(shipTo)] } } }
+      { variables: { customerId: customerGid, address: shipToMailingInput(shipTo) } }
     );
     const body = await res.json();
-    const errors = body.data?.customerUpdate?.userErrors ?? [];
+    const errors = body.data?.customerAddressCreate?.userErrors ?? [];
     if (errors.length > 0 || body.errors?.length) {
       console.error("[app-proxy] customer address save failed:", errors, body.errors ?? "");
-      return;
-    }
-    const customer = body.data?.customerUpdate?.customer;
-    const addressId = customer?.addresses?.[0]?.id;
-    if (customer?.defaultAddress?.id || !addressId) return;
-    const res2 = await admin.graphql(
-      `mutation SetCustomerDefaultShipTo($addressId: ID!, $customerId: ID!) {
-        customerUpdateDefaultAddress(addressId: $addressId, customerId: $customerId) {
-          userErrors { field message }
-        }
-      }`,
-      { variables: { addressId, customerId: customerGid } }
-    );
-    const body2 = await res2.json();
-    const errors2 = body2.data?.customerUpdateDefaultAddress?.userErrors ?? [];
-    if (errors2.length > 0) {
-      console.error("[app-proxy] customer default address set failed:", errors2);
     }
   } catch (err) {
     console.error("[app-proxy] customer address save threw:", err);
@@ -2268,7 +2256,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
     await db.linesheetDraft.deleteMany({
       where: { shopifyCustomerId: wholesaleSession.shopifyCustomerId, status: "EDITING" },
     });
-    if (shipTo && !customerAddress.hasAnyAddress) {
+    if (shipTo && customerAddress.lookupOk && !customerAddress.shipTo) {
       await saveCustomerDefaultAddress(admin, sess.shopifyCustomerId, shipTo);
     }
 
@@ -2472,7 +2460,7 @@ async function handleLinesheetOrder(request: Request, url: URL) {
   // First address this account has ever had → keep it on the customer so the
   // next sheet prefills and the UPS Ship page / Admin see it. (Never when an
   // address exists: that would replace the account's address list.)
-  if (shipTo && !customerAddress.hasAnyAddress) {
+  if (shipTo && customerAddress.lookupOk && !customerAddress.shipTo) {
     await saveCustomerDefaultAddress(admin, sess.shopifyCustomerId, shipTo);
   }
 

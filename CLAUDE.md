@@ -200,9 +200,14 @@ by itself when there is none), the address autosaves with the draft
 with 422 `ship_to_missing` if neither exists, and writes it as
 `shippingAddress` on every draft order it creates or updates (stock,
 backorder, in-place edit). The free-shipping line now keys off that address's
-country, not the account default. If the account had no address at all, the
-submitted one is saved back as its default (`customerUpdate.addresses` +
-`customerUpdateDefaultAddress`, only ever when the list is empty). Orders page
+country, not the account default. **Save-back (changed 2026-10-19):** when the
+account has no *usable* default address (none, or an incomplete stub such as
+the state-only address new customer accounts leave behind), the submitted
+address is appended via `customerAddressCreate(setAsDefault: true)` — append,
+never replace, so existing stubs survive but stop being the default. When
+the account already has a complete default and the buyer typed a different
+one, the profile is left alone (one-off destination). A failed default-address
+lookup (`lookupOk: false`) never triggers the save. Orders page
 detail shows the resolved ship-to; drafts without one get a pointer back to
 the sheet. Adding to an already-paid order (Order Edit API path) is exempt.
 **Needs the Protected customer data "Address" approval on the production
