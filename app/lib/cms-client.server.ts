@@ -28,6 +28,7 @@ export type CmsWholesaleVariant = {
   sku: string;
   wholesale_price: number;   // dollars, e.g. 12.50
   distributor_price: number; // dollars, e.g. 9.00
+  b2b_price?: number;        // dollars; absent on CMS builds before 0.22.5
   moq: number;
   case_size: number | null;  // preferred case pack (soft encouragement); null = none
   in_stock: number;          // from CMS Variant; not used for stock display (Shopify is authoritative)
@@ -101,6 +102,7 @@ export async function syncCmsDataToDb(): Promise<{ count: number; error?: string
         sku: v.sku || "",
         wholesalePriceCents: Math.round(v.wholesale_price * 100),
         distributorPriceCents: Math.round(v.distributor_price * 100),
+        b2bPriceCents: Math.round((v.b2b_price ?? 0) * 100),
         moq: v.moq || 1,
         caseSize: v.case_size && v.case_size > 1 ? v.case_size : null,
         availableToMake: v.available_to_make ?? null,
@@ -152,6 +154,7 @@ export async function syncCmsDataToDb(): Promise<{ count: number; error?: string
 export type CmsCachedVariant = {
   wholesalePriceCents: number;
   distributorPriceCents: number;
+  b2bPriceCents: number;
   moq: number;
   caseSize: number | null;
   availableToMake: number | null;
@@ -185,6 +188,7 @@ export async function getCmsVariantMap(
     sku: true,
     wholesalePriceCents: true,
     distributorPriceCents: true,
+    b2bPriceCents: true,
     moq: true,
     caseSize: true,
     availableToMake: true,
@@ -199,6 +203,7 @@ export async function getCmsVariantMap(
   const toCached = (row: (typeof idRows)[number]): CmsCachedVariant => ({
     wholesalePriceCents: row.wholesalePriceCents,
     distributorPriceCents: row.distributorPriceCents,
+    b2bPriceCents: row.b2bPriceCents,
     moq: row.moq,
     caseSize: row.caseSize,
     availableToMake: row.availableToMake,
@@ -232,7 +237,7 @@ export async function getCmsVariant(
 ): Promise<CmsCachedVariant | null> {
   return db.cmsVariantCache.findUnique({
     where: { shopifyVariantId: String(shopifyVariantId) },
-    select: { wholesalePriceCents: true, distributorPriceCents: true, moq: true, caseSize: true, availableToMake: true },
+    select: { wholesalePriceCents: true, distributorPriceCents: true, b2bPriceCents: true, moq: true, caseSize: true, availableToMake: true },
   });
 }
 
@@ -284,10 +289,13 @@ export type VariantWholesaleState =
  * Price by customer type:
  *   WHOLESALE   → CMS wholesale price
  *   DISTRIBUTOR → CMS distributor price
- *   B2B         → retail minus the customer's resolved discount percent
- *                 (override ?? B2B pricing profile) — the CMS has no B2B
- *                 tier; the profile IS the B2B price. Curation still
- *                 gates availability: no CMS row means not in the program.
+ *   B2B         → CMS b2b price (the third column on the CMS linesheet,
+ *                 added 2026-10-19). While that column is still 0 (cache
+ *                 not yet synced from a CMS that sends it) the old rule
+ *                 applies: retail minus the customer's resolved discount
+ *                 percent (override ?? B2B pricing profile).
+ *                 Curation still gates availability: no CMS row means not
+ *                 in the program.
  */
 export function resolveVariantWholesale(opts: {
   cms: CmsCachedVariant | undefined;
@@ -296,7 +304,7 @@ export function resolveVariantWholesale(opts: {
   productActive: boolean;
   customerType: string;
   retailCents: number;
-  customerDiscountPercent?: number; // required for B2B; ignored otherwise
+  customerDiscountPercent?: number; // B2B fallback while the CMS b2b price is 0; ignored otherwise
 }): VariantWholesaleState {
   const {
     cms, variantId, hiddenVariantIds, productActive, customerType, retailCents,
@@ -308,8 +316,12 @@ export function resolveVariantWholesale(opts: {
   const priceCents =
     customerType === "DISTRIBUTOR"
       ? cms.distributorPriceCents
-      : customerType === "B2B" && customerDiscountPercent != null
-        ? Math.round(retailCents * (1 - customerDiscountPercent / 100))
+      : customerType === "B2B"
+        ? cms.b2bPriceCents > 0
+          ? cms.b2bPriceCents
+          : customerDiscountPercent != null
+            ? Math.round(retailCents * (1 - customerDiscountPercent / 100))
+            : cms.wholesalePriceCents
         : cms.wholesalePriceCents;
   const discountPercent =
     retailCents > 0 ? Math.round((1 - priceCents / retailCents) * 100) : 0;

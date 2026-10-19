@@ -247,6 +247,7 @@ model CmsVariantCache {
   sku                   String   @default("")
   wholesalePriceCents   Int      // CMS wholesale_price × 100
   distributorPriceCents Int      // CMS distributor_price × 100
+  b2bPriceCents         Int      @default(0) // CMS b2b_price × 100; 0 = not synced yet → percentage fallback
   moq                   Int      @default(1)
   caseSize              Int?     // preferred case pack (soft); null = no case concept
   availableToMake       Int?     // CMS available_to_make: buildable from parts on hand; null = no BOM in CMS

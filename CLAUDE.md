@@ -168,6 +168,16 @@ used for order records — not storefront prices.
 The program is managed in the CMS: cms.cwandt.com → Wholesale (list, add
 products with per-variant prices/MOQ at the 50%/30% tier presets, remove).
 
+**B2B price is a CMS column too (2026-10-19).** CMS `WholesaleVariant.b2b_price`
+(renamed from the never-used `custom_price`, seeded equal to the wholesale
+price) is the third editable price on the CMS linesheet, comes through the API
+as `b2b_price`, is cached as `CmsVariantCache.b2bPriceCents`, and
+`resolveVariantWholesale` charges it to B2B customers. Only while the cached
+value is 0 (cache not yet synced from CMS ≥ 0.22.5) does the old rule apply:
+retail minus the resolved discount percent (override ?? `pp_b2b` profile).
+Once synced, the B2B profile percent and per-customer overrides no longer set
+storefront prices for B2B accounts; they remain order-record metadata.
+
 **Catalog-card "Wholesale $X" labels — REMOVED (2026-07-14, by request).** The
 theme's collection/search cards are image + title only (no retail price), and
 Taylor wants them kept that way. The card-label JS in wholesale.js, the
